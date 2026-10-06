@@ -137,7 +137,18 @@ details summary { cursor: pointer; color: var(--ink-2); }
       <h2>Charge et ancienneté par collaborateur</h2>
       <div class="legend" id="ageLegend"></div>
       <div class="scroll"><table id="collabTable"></table></div>
-      <p class="note">Ancienneté = jours entre la « Date inbox » et la date de l'extraction. « En retard » reprend l'indicateur du système.</p>
+      <p class="note">Ancienneté = jours entre la « Date inbox » et la date de l'extraction. « Plus ancien » = date inbox du dossier le plus ancien (en rouge au-delà du seuil). « En retard » reprend l'indicateur du système.</p>
+    </section>
+
+    <section class="card">
+      <h2>Dossiers les plus anciens</h2>
+      <div class="row noprint" style="margin-bottom:12px">
+        <label>Afficher <select id="oldN"><option>10</option><option selected>20</option><option>50</option></select></label>
+        <label>Collaborateur <select id="oldWho"><option value="">Tous</option></select></label>
+        <label><input type="checkbox" id="showId"> Afficher l'ID de l'objet</label>
+      </div>
+      <div class="scroll"><table id="oldTable"></table></div>
+      <p class="note">L'ID de l'objet est masqué par défaut : affiche-le seulement pour retrouver le dossier dans le système, pas en projection.</p>
     </section>
 
     <div class="grid2">
@@ -340,10 +351,11 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
   }
   function summarize(items, ref, thr) {
-    var ages = [], late = 0, over = 0, b = BUCKETS.map(function () { return 0; });
+    var ages = [], late = 0, over = 0, oldest = null, b = BUCKETS.map(function () { return 0; });
     items.forEach(function (it) {
       if (it.late) late++;
       if (!it.inbox) return;
+      if (!oldest || it.inbox < oldest) oldest = it.inbox;
       var a = Math.max(0, Math.round((ref - it.inbox) / 86400000));
       ages.push(a);
       if (a > thr) over++;
@@ -353,7 +365,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     return {
       total: items.length, late: late, latePct: items.length ? late / items.length : 0, over: over,
       avg: ages.length ? Math.round(sum / ages.length) : null, med: median(ages),
-      max: ages.length ? Math.max.apply(null, ages) : null, buckets: b
+      max: ages.length ? Math.max.apply(null, ages) : null, oldest: oldest, buckets: b
     };
   }
   function groupBy(items, key) {
@@ -376,6 +388,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     var tot = summarize(items, ref, thr);
     renderTiles(tot, thr);
     renderCollab(items, ref, thr, tot);
+    renderOldest(items, ref, thr);
     renderCross(items, 'statut', $('statusTable'), 'Statut');
     renderCross(items, 'type', $('typeTable'), 'Type de transaction');
     renderHistory();
@@ -422,17 +435,17 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     });
     var maxTot = Math.max.apply(null, rows.map(function (r) { return r.total; }).concat([1]));
     var cols = [['name', 'Collaborateur'], ['total', 'Dossiers'], ['late', 'En retard'], ['latePct', '% retard'],
-      ['over', '> seuil'], ['med', 'Médiane (j)'], ['max', 'Max (j)'], [null, 'Répartition par ancienneté']];
+      ['over', '> seuil'], ['med', 'Médiane (j)'], ['max', 'Plus ancien'], [null, 'Répartition par ancienneté']];
     var h = '<thead><tr>' + cols.map(function (c) {
       return '<th' + (c[0] ? ' data-k="' + c[0] + '" class="' + (c[0] === sk ? 'sorted' + (asc ? ' asc' : '') : '') + '"' : ' style="text-align:left;cursor:default"') + '>' + c[1] + '</th>';
     }).join('') + '</tr></thead><tbody>';
     rows.forEach(function (r) {
       h += '<tr><td>' + esc(r.name) + '</td><td>' + r.total + '</td><td' + (r.late ? ' class="hot"' : '') + '>' + r.late +
         '</td><td>' + Math.round(r.latePct * 100) + ' %</td><td>' + r.over + '</td><td>' + (r.med == null ? '–' : r.med) +
-        '</td><td>' + (r.max == null ? '–' : r.max) + '</td><td class="bar">' + stack(r, maxTot) + '</td></tr>';
+        '</td><td>' + oldestCell(r, thr) + '</td><td class="bar">' + stack(r, maxTot) + '</td></tr>';
     });
     h += '<tr class="total"><td>Total équipe</td><td>' + tot.total + '</td><td>' + tot.late + '</td><td>' + Math.round(tot.latePct * 100) +
-      ' %</td><td>' + tot.over + '</td><td>' + (tot.med == null ? '–' : tot.med) + '</td><td>' + (tot.max == null ? '–' : tot.max) + '</td><td></td></tr></tbody>';
+      ' %</td><td>' + tot.over + '</td><td>' + (tot.med == null ? '–' : tot.med) + '</td><td>' + oldestCell(tot, thr) + '</td><td></td></tr></tbody>';
     var t = $('collabTable'); t.innerHTML = h;
     t.querySelectorAll('th[data-k]').forEach(function (th) {
       th.onclick = function () {
@@ -443,6 +456,11 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     });
     t.querySelectorAll('.stack span').forEach(function (s) { hover(s, s.getAttribute('data-tip')); });
   }
+  function dmy(d) { return String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + d.getFullYear(); }
+  function oldestCell(r, thr) {
+    if (!r.oldest) return '–';
+    return '<span' + (r.max > thr ? ' class="hot"' : '') + '>' + dmy(r.oldest) + '</span> <span class="muted">(' + r.max + ' j)</span>';
+  }
   function stack(r, maxTot) {
     var w = r.total / maxTot * 100;
     return '<div class="stack" style="width:' + w.toFixed(1) + '%">' + r.buckets.map(function (n, i) {
@@ -451,6 +469,27 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     }).join('') + '</div>';
   }
 
+  function renderOldest(items, ref, thr) {
+    var alias = aliasMap(Object.keys(groupBy(items, 'resp'))), sel = $('oldWho'), who = sel.value;
+    var people = Object.keys(alias).sort(function (a, b) { return alias[a].localeCompare(alias[b]); });
+    if (people.indexOf(who) < 0) who = '';
+    sel.innerHTML = '<option value="">Tous</option>' + people.map(function (p) {
+      return '<option value="' + esc(p) + '"' + (p === who ? ' selected' : '') + '>' + esc(alias[p]) + '</option>';
+    }).join('');
+    var list = items.filter(function (it) { return it.inbox && (!who || it.resp === who); })
+      .sort(function (a, b) { return a.inbox - b.inbox; }).slice(0, +$('oldN').value || 20);
+    var showId = $('showId').checked, th = function (t, left) { return '<th style="cursor:default' + (left ? ';text-align:left' : '') + '">' + t + '</th>'; };
+    if (!list.length) { $('oldTable').innerHTML = '<tr><td class="empty">Aucun dossier daté</td></tr>'; return; }
+    $('oldTable').innerHTML = '<thead><tr>' + th('Date inbox') + th('Ancienneté') + th('Collaborateur', 1) + th('Type de transaction', 1) +
+      th('Statut', 1) + th('En retard', 1) + (showId ? th("ID de l'objet", 1) : '') + '</tr></thead><tbody>' +
+      list.map(function (it) {
+        var a = Math.max(0, Math.round((ref - it.inbox) / 86400000)), L = 'style="text-align:left"';
+        return '<tr><td>' + dmy(it.inbox) + '</td><td' + (a > thr ? ' class="hot"' : '') + '>' + a + ' j</td><td ' + L + '>' + esc(alias[it.resp]) +
+          '</td><td ' + L + '>' + esc(it.type) + '</td><td ' + L + '>' + esc(it.statut) + '</td><td ' + L + '>' +
+          (it.late ? '<span class="status hot"><span class="dot" style="background:var(--critical)"></span>Oui</span>' : '<span class="muted">Non</span>') +
+          '</td>' + (showId ? '<td ' + L + '>' + esc(it.id) + '</td>' : '') + '</tr>';
+      }).join('') + '</tbody>';
+  }
   function renderCross(items, key, table, label) {
     var g = groupBy(items, key), keys = Object.keys(g).sort(function (a, b) { return g[b].length - g[a].length; });
     if (!keys.length) { table.innerHTML = '<tr><td class="empty">Aucune donnée</td></tr>'; return; }
@@ -627,7 +666,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   ['dragenter', 'dragover'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('over'); }); });
   ['dragleave', 'drop'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('over'); }); });
   drop.addEventListener('drop', function (e) { readFiles(e.dataTransfer.files); });
-  ['refDate', 'threshold', 'prestFilter', 'pseudo'].forEach(function (id) { $(id).addEventListener('change', render); });
+  ['refDate', 'threshold', 'prestFilter', 'pseudo', 'oldN', 'oldWho', 'showId'].forEach(function (id) { $(id).addEventListener('change', render); });
   $('exportBtn').onclick = exportSnapshot;
   $('loadSnapBtn').onclick = function () { $('snapInput').click(); };
   $('snapInput').onchange = function () { readSnapshots(this.files); this.value = ''; };
