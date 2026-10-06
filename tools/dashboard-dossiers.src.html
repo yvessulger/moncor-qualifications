@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Aucune ressource externe : la page doit fonctionner hors-ligne et ne rien transmettre. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; form-action 'none'">
+<title>Suivi des inbox</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11,11,11,0.10);
+  --accent: #2a78d6;
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --b1: #86b6ef; --b2: #3987e5; --b3: #1c5cab; --b4: #0d366b;
+  --critical: #d03b3b;
+  --warning: #fab219;
+  --good: #0ca30c;
+  --wash: rgba(42,120,214,0.08);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7;
+    --muted: #898781; --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --accent: #3987e5; --s1: #3987e5; --s2: #d95926;
+    --b1: #184f95; --b2: #256abf; --b3: #5598e7; --b4: #9ec5f4;
+    --wash: rgba(57,135,229,0.12);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7;
+  --muted: #898781; --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+  --accent: #3987e5; --s1: #3987e5; --s2: #d95926;
+  --b1: #184f95; --b2: #256abf; --b3: #5598e7; --b4: #9ec5f4;
+  --wash: rgba(57,135,229,0.12);
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 15px; margin: 0 0 12px; }
+p.lead { color: var(--ink-2); margin: 0 0 20px; }
+.badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; margin-left: 8px; vertical-align: middle; }
+.badge::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--good); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+.drop { border: 2px dashed var(--axis); border-radius: 10px; padding: 24px; text-align: center; color: var(--ink-2); cursor: pointer; }
+.drop.over { border-color: var(--accent); background: var(--wash); }
+.drop strong { color: var(--ink); }
+.row { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; }
+label { color: var(--ink-2); font-size: 13px; }
+input[type=date], input[type=number], select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 6px; padding: 4px 8px; }
+input[type=number] { width: 70px; }
+button { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+button:hover { background: var(--wash); }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.files { list-style: none; margin: 12px 0 0; padding: 0; font-size: 13px; }
+.files li { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; border-top: 1px solid var(--grid); flex-wrap: wrap; }
+.files li .x { margin-left: auto; padding: 0 8px; }
+.files .warn { color: var(--critical); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.tile .k { color: var(--ink-2); font-size: 12px; }
+.tile .v { font-size: 28px; font-weight: 600; margin-top: 2px; }
+.tile .s { color: var(--muted); font-size: 12px; }
+.status { display: inline-flex; align-items: center; gap: 4px; }
+.status .dot { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 7px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--ink-2); font-weight: 500; font-size: 12px; cursor: pointer; user-select: none; }
+th.sorted::after { content: " ▾"; }
+th.sorted.asc::after { content: " ▴"; }
+tr.total td { font-weight: 600; border-top: 2px solid var(--axis); }
+td.bar { width: 34%; min-width: 180px; }
+.stack { display: flex; gap: 2px; height: 14px; }
+.stack span { display: block; height: 100%; }
+.stack span:first-child { border-radius: 4px 0 0 4px; }
+.stack span:last-child { border-radius: 0 4px 4px 0; }
+.stack span:only-child { border-radius: 4px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--ink-2); margin-bottom: 10px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.hot { color: var(--critical); font-weight: 600; }
+.muted { color: var(--muted); }
+.note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+.grid2 .card { margin-bottom: 0; }
+#tip { position: fixed; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.15); display: none; z-index: 10; }
+#trendSvg { width: 100%; height: auto; display: block; }
+.empty { color: var(--muted); text-align: center; padding: 28px 0; }
+details summary { cursor: pointer; color: var(--ink-2); }
+.hidden { display: none !important; }
+@media print { .noprint { display: none !important; } body { background: #fff; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Suivi des inbox <span class="badge">Traitement 100 % local</span></h1>
+  <p class="lead">Glisse les extractions Excel du jour. Les fichiers sont lus dans ce navigateur uniquement : rien n'est envoyé, rien n'est enregistré. Les colonnes <em>Description</em> et <em>Bénéficiaire</em> (identité des assurés) sont ignorées dès la lecture.</p>
+
+  <section class="card noprint">
+    <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choisir des fichiers Excel">
+      <strong>Dépose ici les fichiers .xlsx / .xls / .csv</strong><br>
+      ou clique pour les choisir (un fichier par collaborateur et par prestation, plusieurs à la fois possible)
+      <input type="file" id="fileInput" accept=".xlsx,.xls,.xlsm,.csv" multiple hidden>
+    </div>
+    <ul class="files" id="fileList"></ul>
+    <div class="row" style="margin-top:14px">
+      <label>Date de l'extraction <input type="date" id="refDate"></label>
+      <label>Seuil d'alerte (jours en inbox) <input type="number" id="threshold" min="1" value="30"></label>
+      <label>Prestation
+        <select id="prestFilter"><option value="">Toutes</option></select>
+      </label>
+      <label><input type="checkbox" id="pseudo"> Pseudonymiser les collaborateurs (C1, C2…)</label>
+    </div>
+  </section>
+
+  <div id="dash" class="hidden">
+    <div class="tiles" id="tiles"></div>
+
+    <section class="card">
+      <h2>Charge et ancienneté par collaborateur</h2>
+      <div class="legend" id="ageLegend"></div>
+      <div class="scroll"><table id="collabTable"></table></div>
+      <p class="note">Ancienneté = jours entre la « Date inbox » et la date de l'extraction. « En retard » reprend l'indicateur du système.</p>
+    </section>
+
+    <div class="grid2">
+      <section class="card">
+        <h2>Par statut d'utilisateur</h2>
+        <div class="scroll"><table id="statusTable"></table></div>
+      </section>
+      <section class="card">
+        <h2>Par type de transaction</h2>
+        <div class="scroll"><table id="typeTable"></table></div>
+      </section>
+    </div>
+
+    <section class="card" style="margin-top:16px">
+      <h2>Évolution dans le temps</h2>
+      <p class="note" style="margin-top:0">Exporte un instantané chaque jour (fichier CSV agrégé, sans aucun nom d'assuré), puis recharge les instantanés précédents ici pour voir la tendance.</p>
+      <div class="row noprint" style="margin-bottom:12px">
+        <button class="primary" id="exportBtn">Exporter l'instantané du jour (.csv)</button>
+        <button id="loadSnapBtn">Charger des instantanés…</button>
+        <input type="file" id="snapInput" accept=".csv" multiple hidden>
+        <button id="printBtn">Imprimer / PDF</button>
+      </div>
+      <div id="trend"></div>
+    </section>
+
+    <details class="card noprint">
+      <summary>Contrôle de lecture des fichiers</summary>
+      <div id="diag" style="margin-top:10px"></div>
+    </details>
+  </div>
+</main>
+<div id="tip" role="tooltip"></div>
+
+<script>
+/*__XLSX_LIB__*/
+</script>
+<script>
+(function () {
+  'use strict';
+
+  // ---- Colonnes reconnues (les autres, dont Description et Bénéficiaire, ne sont jamais extraites) ----
+  var COLS = {
+    retard:  ['en retard', 'retard'],
+    statut:  ["statut d utilisateur", 'statut utilisateur', 'statut'],
+    inbox:   ['date inbox', 'date d inbox', 'inbox'],
+    type:    ['type de transaction', 'transaction'],
+    debut:   ['date de debut', 'debut'],
+    resp:    ['personne responsable', 'responsable'],
+    id:      ["id de l objet", 'id objet', 'objet']
+  };
+  var EXCLUDED = ['description', 'beneficiaire'];
+  var BUCKETS = [
+    { max: 7, label: '0–7 j', v: '--b1' },
+    { max: 14, label: '8–14 j', v: '--b2' },
+    { max: 30, label: '15–30 j', v: '--b3' },
+    { max: Infinity, label: '> 30 j', v: '--b4' }
+  ];
+
+  var state = { files: {}, snapshots: {}, sort: { key: 'total', asc: false } };
+  var $ = function (id) { return document.getElementById(id); };
+
+  function norm(s) {
+    return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; });
+  }
+  function isoDay(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function toDate(v) {
+    if (v == null || v === '') return null;
+    if (v instanceof Date) return isNaN(v) ? null : new Date(v.getFullYear(), v.getMonth(), v.getDate());
+    if (typeof v === 'number') { // numéro de série Excel
+      var d = new Date(Math.round((v - 25569) * 86400000));
+      return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+    }
+    var s = String(v).trim(), m;
+    if ((m = s.match(/^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})/))) {
+      var y = +m[3]; if (y < 100) y += 2000;
+      return new Date(y, +m[2] - 1, +m[1]);
+    }
+    if ((m = s.match(/^(\d{4})-(\d{2})-(\d{2})/))) return new Date(+m[1], +m[2] - 1, +m[3]);
+    return null;
+  }
+  function isLate(v) {
+    if (v == null) return false;
+    if (typeof v === 'boolean') return v;
+    var s = norm(v);
+    return !(s === '' || s === 'non' || s === 'no' || s === 'n' || s === '0' || s === 'false' || s === 'faux');
+  }
+  function refDate() { return toDate($('refDate').value) || new Date(); }
+
+  // ---- Lecture d'un fichier : seules les colonnes utiles sont conservées ----
+  function parseWorkbook(name, wb) {
+    var ws = wb.Sheets[wb.SheetNames[0]];
+    var rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null, blankrows: false });
+    var hIdx = -1, map = {};
+    for (var r = 0; r < Math.min(rows.length, 20) && hIdx < 0; r++) {
+      var heads = (rows[r] || []).map(norm);
+      if (heads.indexOf('personne responsable') >= 0 || heads.indexOf('date inbox') >= 0) hIdx = r;
+    }
+    if (hIdx < 0) return { name: name, error: 'En-têtes introuvables (« Personne responsable » / « Date inbox »).' };
+    var heads = rows[hIdx].map(norm);
+    Object.keys(COLS).forEach(function (key) {
+      for (var i = 0; i < COLS[key].length && map[key] == null; i++) {
+        var j = heads.indexOf(COLS[key][i]);
+        if (j >= 0 && EXCLUDED.indexOf(heads[j]) < 0) map[key] = j;
+      }
+    });
+    var fallbackResp = name.replace(/\.[^.]+$/, '').split(/[ _-]/)[0].toUpperCase();
+    var lateValues = {}, items = [];
+    for (var k = hIdx + 1; k < rows.length; k++) {
+      var row = rows[k]; if (!row) continue;
+      var get = function (key) { return map[key] != null ? row[map[key]] : null; };
+      var inbox = toDate(get('inbox')), resp = get('resp');
+      if (!inbox && !resp && get('id') == null) continue;
+      var rv = get('retard'); var rk = rv == null || rv === '' ? '(vide)' : String(rv);
+      lateValues[rk] = (lateValues[rk] || 0) + 1;
+      items.push({
+        resp: resp ? String(resp).trim() : fallbackResp,
+        statut: get('statut') ? String(get('statut')).trim() : '(sans statut)',
+        type: get('type') ? String(get('type')).trim() : '(non précisé)',
+        inbox: inbox,
+        late: isLate(rv),
+        id: get('id') != null ? String(get('id')) : ''
+      });
+    }
+    rows = null; // libère les données brutes (dont les noms d'assurés)
+    return { name: name, items: items, map: map, lateValues: lateValues, prest: guessPrest(name) };
+  }
+  function guessPrest(name) {
+    var base = name.replace(/\.[^.]+$/, '').split(/[ _-]+/);
+    return base.length > 1 ? base.slice(1).join(' ') : '(non précisé)';
+  }
+
+  function readFiles(list) {
+    Array.prototype.forEach.call(list, function (f) {
+      var fr = new FileReader();
+      fr.onload = function (e) {
+        try {
+          var wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array', cellDates: true, dense: false });
+          state.files[f.name] = parseWorkbook(f.name, wb);
+          if (!$('refDate').value && f.lastModified) $('refDate').value = isoDay(new Date(f.lastModified));
+        } catch (err) {
+          state.files[f.name] = { name: f.name, error: 'Lecture impossible : ' + err.message };
+        }
+        render();
+      };
+      fr.readAsArrayBuffer(f);
+    });
+  }
+
+  // ---- Agrégation ----
+  function allItems() {
+    var p = $('prestFilter').value, out = [];
+    Object.keys(state.files).forEach(function (n) {
+      var f = state.files[n]; if (!f.items) return;
+      if (p && f.prest !== p) return;
+      f.items.forEach(function (it) { out.push(it); });
+    });
+    return out;
+  }
+  function median(a) {
+    if (!a.length) return null;
+    var s = a.slice().sort(function (x, y) { return x - y; }), m = s.length >> 1;
+    return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
+  }
+  function summarize(items, ref, thr) {
+    var ages = [], late = 0, over = 0, b = BUCKETS.map(function () { return 0; });
+    items.forEach(function (it) {
+      if (it.late) late++;
+      if (!it.inbox) return;
+      var a = Math.max(0, Math.round((ref - it.inbox) / 86400000));
+      ages.push(a);
+      if (a > thr) over++;
+      for (var i = 0; i < BUCKETS.length; i++) if (a <= BUCKETS[i].max) { b[i]++; break; }
+    });
+    var sum = ages.reduce(function (x, y) { return x + y; }, 0);
+    return {
+      total: items.length, late: late, latePct: items.length ? late / items.length : 0, over: over,
+      avg: ages.length ? Math.round(sum / ages.length) : null, med: median(ages),
+      max: ages.length ? Math.max.apply(null, ages) : null, buckets: b
+    };
+  }
+  function groupBy(items, key) {
+    var g = {};
+    items.forEach(function (it) { (g[it[key]] = g[it[key]] || []).push(it); });
+    return g;
+  }
+  function aliasMap(names) {
+    var m = {}, pseudo = $('pseudo').checked;
+    names.slice().sort().forEach(function (n, i) { m[n] = pseudo ? 'C' + (i + 1) : n; });
+    return m;
+  }
+
+  // ---- Rendu ----
+  function render() {
+    renderFiles();
+    var items = allItems();
+    $('dash').classList.toggle('hidden', !Object.keys(state.files).some(function (n) { return state.files[n].items; }));
+    var ref = refDate(), thr = +$('threshold').value || 30;
+    var tot = summarize(items, ref, thr);
+    renderTiles(tot, thr);
+    renderCollab(items, ref, thr, tot);
+    renderCross(items, 'statut', $('statusTable'), 'Statut');
+    renderCross(items, 'type', $('typeTable'), 'Type de transaction');
+    renderTrend();
+    renderDiag();
+  }
+
+  function renderFiles() {
+    var ul = $('fileList'); ul.innerHTML = '';
+    var prests = {};
+    Object.keys(state.files).sort().forEach(function (n) {
+      var f = state.files[n], li = document.createElement('li');
+      if (f.items) prests[f.prest] = 1;
+      li.innerHTML = '<span>' + esc(n) + '</span>' + (f.error
+        ? '<span class="warn">' + esc(f.error) + '</span>'
+        : '<span class="muted">' + f.items.length + ' dossiers · prestation : ' + esc(f.prest) + '</span>') +
+        '<button class="x" aria-label="Retirer">✕</button>';
+      li.querySelector('.x').onclick = function () { delete state.files[n]; render(); };
+      ul.appendChild(li);
+    });
+    var sel = $('prestFilter'), cur = sel.value;
+    sel.innerHTML = '<option value="">Toutes</option>' + Object.keys(prests).sort().map(function (p) {
+      return '<option' + (p === cur ? ' selected' : '') + '>' + esc(p) + '</option>';
+    }).join('');
+  }
+
+  function tile(k, v, s) { return '<div class="tile"><div class="k">' + k + '</div><div class="v">' + v + '</div><div class="s">' + (s || '') + '</div></div>'; }
+  function renderTiles(t, thr) {
+    $('tiles').innerHTML =
+      tile('Dossiers en inbox', t.total.toLocaleString('fr-CH'), 'tous collaborateurs filtrés') +
+      tile('<span class="status"><span class="dot" style="background:var(--critical)"></span>En retard</span>', t.late.toLocaleString('fr-CH'), Math.round(t.latePct * 100) + ' % des dossiers') +
+      tile('Ancienneté médiane', t.med == null ? '–' : t.med + ' j', 'moyenne ' + (t.avg == null ? '–' : t.avg + ' j')) +
+      tile('<span class="status"><span class="dot" style="background:var(--warning)"></span>Au-delà du seuil</span>', t.over.toLocaleString('fr-CH'), '> ' + thr + ' jours en inbox · max ' + (t.max == null ? '–' : t.max + ' j'));
+  }
+
+  function renderCollab(items, ref, thr, tot) {
+    $('ageLegend').innerHTML = BUCKETS.map(function (b) { return '<span><i style="background:var(' + b.v + ')"></i>' + b.label + '</span>'; }).join('');
+    var g = groupBy(items, 'resp'), alias = aliasMap(Object.keys(g));
+    var rows = Object.keys(g).map(function (r) { var s = summarize(g[r], ref, thr); s.name = alias[r]; return s; });
+    var sk = state.sort.key, asc = state.sort.asc;
+    rows.sort(function (a, b) {
+      var x = a[sk], y = b[sk];
+      if (typeof x === 'string') return asc ? x.localeCompare(y) : y.localeCompare(x);
+      return asc ? (x || 0) - (y || 0) : (y || 0) - (x || 0);
+    });
+    var maxTot = Math.max.apply(null, rows.map(function (r) { return r.total; }).concat([1]));
+    var cols = [['name', 'Collaborateur'], ['total', 'Dossiers'], ['late', 'En retard'], ['latePct', '% retard'],
+      ['over', '> seuil'], ['med', 'Médiane (j)'], ['max', 'Max (j)'], [null, 'Répartition par ancienneté']];
+    var h = '<thead><tr>' + cols.map(function (c) {
+      return '<th' + (c[0] ? ' data-k="' + c[0] + '" class="' + (c[0] === sk ? 'sorted' + (asc ? ' asc' : '') : '') + '"' : ' style="text-align:left;cursor:default"') + '>' + c[1] + '</th>';
+    }).join('') + '</tr></thead><tbody>';
+    rows.forEach(function (r) {
+      h += '<tr><td>' + esc(r.name) + '</td><td>' + r.total + '</td><td' + (r.late ? ' class="hot"' : '') + '>' + r.late +
+        '</td><td>' + Math.round(r.latePct * 100) + ' %</td><td>' + r.over + '</td><td>' + (r.med == null ? '–' : r.med) +
+        '</td><td>' + (r.max == null ? '–' : r.max) + '</td><td class="bar">' + stack(r, maxTot) + '</td></tr>';
+    });
+    h += '<tr class="total"><td>Total équipe</td><td>' + tot.total + '</td><td>' + tot.late + '</td><td>' + Math.round(tot.latePct * 100) +
+      ' %</td><td>' + tot.over + '</td><td>' + (tot.med == null ? '–' : tot.med) + '</td><td>' + (tot.max == null ? '–' : tot.max) + '</td><td></td></tr></tbody>';
+    var t = $('collabTable'); t.innerHTML = h;
+    t.querySelectorAll('th[data-k]').forEach(function (th) {
+      th.onclick = function () {
+        var k = th.getAttribute('data-k');
+        state.sort = { key: k, asc: state.sort.key === k ? !state.sort.asc : k === 'name' };
+        render();
+      };
+    });
+    t.querySelectorAll('.stack span').forEach(function (s) { hover(s, s.getAttribute('data-tip')); });
+  }
+  function stack(r, maxTot) {
+    var w = r.total / maxTot * 100;
+    return '<div class="stack" style="width:' + w.toFixed(1) + '%">' + r.buckets.map(function (n, i) {
+      if (!n) return '';
+      return '<span style="flex:' + n + ';background:var(' + BUCKETS[i].v + ')" data-tip="' + esc(r.name) + ' · ' + BUCKETS[i].label + ' : ' + n + ' dossier' + (n > 1 ? 's' : '') + '"></span>';
+    }).join('') + '</div>';
+  }
+
+  function renderCross(items, key, table, label) {
+    var g = groupBy(items, key), keys = Object.keys(g).sort(function (a, b) { return g[b].length - g[a].length; });
+    if (!keys.length) { table.innerHTML = '<tr><td class="empty">Aucune donnée</td></tr>'; return; }
+    var max = g[keys[0]].length;
+    table.innerHTML = '<thead><tr><th style="cursor:default">' + label + '</th><th style="cursor:default">Dossiers</th><th style="cursor:default">En retard</th><th style="cursor:default;text-align:left"></th></tr></thead><tbody>' +
+      keys.map(function (k) {
+        var n = g[k].length, l = g[k].filter(function (i) { return i.late; }).length;
+        return '<tr><td>' + esc(k) + '</td><td>' + n + '</td><td' + (l ? ' class="hot"' : '') + '>' + l + '</td><td class="bar"><div class="stack" style="width:' + (n / max * 100).toFixed(1) + '%"><span style="flex:1;background:var(--s1)"></span></div></td></tr>';
+      }).join('') + '</tbody>';
+  }
+
+  // ---- Instantanés agrégés (aucune donnée d'assuré) ----
+  function snapshotRows() {
+    var items = allItems(), ref = refDate(), thr = +$('threshold').value || 30, day = isoDay(ref);
+    var g = groupBy(items, 'resp'), out = [];
+    Object.keys(g).sort().forEach(function (r) {
+      var s = summarize(g[r], ref, thr);
+      out.push([day, r, s.total, s.late, s.over, s.med == null ? '' : s.med].concat(s.buckets));
+    });
+    return out;
+  }
+  var SNAP_HEAD = ['date', 'collaborateur', 'dossiers', 'en_retard', 'au_dela_seuil', 'mediane_jours', 'age_0_7', 'age_8_14', 'age_15_30', 'age_31_plus'];
+  function exportSnapshot() {
+    var rows = snapshotRows(); if (!rows.length) return;
+    var csv = [SNAP_HEAD].concat(rows).map(function (r) {
+      return r.map(function (c) { c = String(c); return /[;"\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(';');
+    }).join('\r\n');
+    var p = $('prestFilter').value;
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = 'instantane_' + rows[0][0] + (p ? '_' + p.replace(/\W+/g, '-') : '') + '.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+    rows.forEach(function (r) { (state.snapshots[r[0]] = state.snapshots[r[0]] || {})[r[1]] = r; });
+    renderTrend();
+  }
+  function readSnapshots(list) {
+    Array.prototype.forEach.call(list, function (f) {
+      var fr = new FileReader();
+      fr.onload = function (e) {
+        var lines = String(e.target.result).replace(/^﻿/, '').split(/\r?\n/).filter(Boolean);
+        lines.slice(1).forEach(function (l) {
+          var c = l.split(';').map(function (x) { return x.replace(/^"|"$/g, ''); });
+          if (c.length < 4 || !/^\d{4}-\d{2}-\d{2}$/.test(c[0])) return;
+          (state.snapshots[c[0]] = state.snapshots[c[0]] || {})[c[1]] = [c[0], c[1], +c[2], +c[3], +c[4] || 0];
+        });
+        renderTrend();
+      };
+      fr.readAsText(f, 'utf-8');
+    });
+  }
+  function renderTrend() {
+    var days = Object.keys(state.snapshots).sort(), box = $('trend');
+    if (days.length < 2) {
+      box.innerHTML = '<div class="empty">' + (days.length ? 'Un seul jour disponible — il faut au moins deux instantanés pour une tendance.' : 'Aucun instantané chargé.') + '</div>';
+      return;
+    }
+    var pts = days.map(function (d) {
+      var t = 0, l = 0; Object.keys(state.snapshots[d]).forEach(function (r) { t += +state.snapshots[d][r][2]; l += +state.snapshots[d][r][3]; });
+      return { d: d, t: t, l: l };
+    });
+    var W = Math.max(320, box.clientWidth || 800), H = 220, L = 44, R = 70, T = 12, B = 28, maxY = Math.max.apply(null, pts.map(function (p) { return p.t; }).concat([1]));
+    var step = Math.pow(10, Math.floor(Math.log10(maxY))); var top = Math.ceil(maxY / step) * step;
+    var t0 = Date.parse(pts[0].d), span = Date.parse(pts[pts.length - 1].d) - t0 || 1;
+    var x = function (i) { return L + (Date.parse(pts[i].d) - t0) / span * (W - L - R); };
+    var y = function (v) { return T + (H - T - B) * (1 - v / top); };
+    var s = '<svg id="trendSvg" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Évolution des dossiers en inbox et en retard">';
+    for (var k = 0; k <= 4; k++) {
+      var v = top * k / 4;
+      s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="var(' + (k ? '--grid' : '--axis') + ')" stroke-width="1"/>' +
+        '<text x="' + (L - 6) + '" y="' + (y(v) + 4) + '" text-anchor="end" font-size="11" fill="var(--muted)">' + Math.round(v) + '</text>';
+    }
+    var lbl = Math.max(1, Math.ceil(pts.length / 8));
+    pts.forEach(function (p, i) {
+      if (i % lbl === 0 || i === pts.length - 1) s += '<text x="' + x(i) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="11" fill="var(--muted)">' + p.d.slice(8) + '.' + p.d.slice(5, 7) + '</text>';
+    });
+    [['t', '--s1', 'Dossiers'], ['l', '--s2', 'En retard']].forEach(function (ser) {
+      s += '<polyline fill="none" stroke="var(' + ser[1] + ')" stroke-width="2" stroke-linejoin="round" points="' + pts.map(function (p, i) { return x(i) + ',' + y(p[ser[0]]); }).join(' ') + '"/>';
+      var last = pts[pts.length - 1];
+      s += '<text x="' + (x(pts.length - 1) + 8) + '" y="' + (y(last[ser[0]]) + 4) + '" font-size="12" fill="var(--ink-2)">' + ser[2] + '</text>';
+    });
+    s += '<line id="cross" y1="' + T + '" y2="' + (H - B) + '" stroke="var(--axis)" visibility="hidden"/>';
+    pts.forEach(function (p, i) {
+      var a = i ? (x(i - 1) + x(i)) / 2 : L, b = i < pts.length - 1 ? (x(i) + x(i + 1)) / 2 : W - R;
+      s += '<rect class="hit" data-i="' + i + '" x="' + a + '" y="0" width="' + (b - a) + '" height="' + H + '" fill="transparent"/>';
+    });
+    s += '</svg>';
+    var first = pts[0], last = pts[pts.length - 1], dT = last.t - first.t, dL = last.l - first.l;
+    box.innerHTML = '<div class="legend"><span><i style="background:var(--s1)"></i>Dossiers en inbox</span><span><i style="background:var(--s2)"></i>Dont en retard</span></div>' + s +
+      '<p class="note">Du ' + fmt(first.d) + ' au ' + fmt(last.d) + ' : dossiers ' + sign(dT) + ', en retard ' + sign(dL) + '.</p>';
+    var cross = box.querySelector('#cross');
+    box.querySelectorAll('.hit').forEach(function (r) {
+      var p = pts[+r.getAttribute('data-i')], i = +r.getAttribute('data-i');
+      hover(r, fmt(p.d) + ' — dossiers : ' + p.t + ' · en retard : ' + p.l, function (on) {
+        cross.setAttribute('visibility', on ? 'visible' : 'hidden'); cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i));
+      });
+    });
+  }
+  function fmt(d) { return d.slice(8) + '.' + d.slice(5, 7) + '.' + d.slice(0, 4); }
+  function sign(n) { return (n > 0 ? '+' : '') + n; }
+
+  function renderDiag() {
+    var names = { retard: 'En retard', statut: "Statut d'utilisateur", inbox: 'Date inbox', type: 'Type de transaction', debut: 'Date de début', resp: 'Personne responsable', id: "ID de l'objet" };
+    $('diag').innerHTML = Object.keys(state.files).sort().map(function (n) {
+      var f = state.files[n];
+      if (f.error) return '<p><strong>' + esc(n) + '</strong> — <span class="hot">' + esc(f.error) + '</span></p>';
+      var missing = Object.keys(names).filter(function (k) { return f.map[k] == null; }).map(function (k) { return names[k]; });
+      return '<p><strong>' + esc(n) + '</strong> — ' + f.items.length + ' lignes lues. ' +
+        (missing.length ? '<span class="hot">Colonnes non trouvées : ' + esc(missing.join(', ')) + '.</span> ' : 'Toutes les colonnes attendues sont reconnues. ') +
+        'Valeurs de « En retard » : ' + Object.keys(f.lateValues).map(function (v) { return '« ' + esc(v) + ' » ×' + f.lateValues[v] + (isLate(v === '(vide)' ? '' : v) ? ' (compté en retard)' : ''); }).join(', ') + '.</p>';
+    }).join('');
+  }
+
+  // ---- Infobulle ----
+  var tip = $('tip');
+  function hover(el, text, cb) {
+    el.addEventListener('mousemove', function (e) {
+      tip.textContent = text; tip.style.display = 'block';
+      var x = Math.min(e.clientX + 12, window.innerWidth - tip.offsetWidth - 8);
+      tip.style.left = x + 'px'; tip.style.top = (e.clientY + 14) + 'px';
+      if (cb) cb(true);
+    });
+    el.addEventListener('mouseleave', function () { tip.style.display = 'none'; if (cb) cb(false); });
+  }
+
+  // ---- Événements ----
+  var drop = $('drop'), input = $('fileInput');
+  drop.onclick = function () { input.click(); };
+  drop.onkeydown = function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } };
+  input.onchange = function () { readFiles(input.files); input.value = ''; };
+  ['dragenter', 'dragover'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('over'); }); });
+  ['dragleave', 'drop'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('over'); }); });
+  drop.addEventListener('drop', function (e) { readFiles(e.dataTransfer.files); });
+  ['refDate', 'threshold', 'prestFilter', 'pseudo'].forEach(function (id) { $(id).addEventListener('change', render); });
+  $('exportBtn').onclick = exportSnapshot;
+  $('loadSnapBtn').onclick = function () { $('snapInput').click(); };
+  $('snapInput').onchange = function () { readSnapshots(this.files); this.value = ''; };
+  $('printBtn').onclick = function () { window.print(); };
+  var rz; window.addEventListener('resize', function () { clearTimeout(rz); rz = setTimeout(renderTrend, 150); });
+  render();
+})();
+</script>
+</body>
+</html>
