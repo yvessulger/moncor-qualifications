@@ -105,6 +105,7 @@ td.bar { width: 34%; min-width: 180px; }
 .empty { color: var(--muted); text-align: center; padding: 28px 0; }
 details summary { cursor: pointer; color: var(--ink-2); }
 .hidden { display: none !important; }
+.session { margin-top: 14px; padding: 12px 14px; border-radius: 8px; background: var(--wash); }
 @media print { .noprint { display: none !important; } body { background: #fff; } }
 </style>
 </head>
@@ -120,6 +121,16 @@ details summary { cursor: pointer; color: var(--ink-2); }
       <input type="file" id="fileInput" accept=".xlsx,.xls,.xlsm,.csv" multiple hidden>
     </div>
     <ul class="files" id="fileList"></ul>
+    <div class="session">
+      <div><strong>Historique</strong> <span class="muted" id="histInfo">Aucun historique chargé.</span></div>
+      <div class="row" style="margin-top:8px">
+        <button id="loadSnapBtn">Importer l'historique (.csv)</button>
+        <input type="file" id="snapInput" accept=".csv" multiple hidden>
+        <button id="exportBtn">Télécharger l'historique (.csv)</button>
+        <button class="primary" id="endBtn">Terminer : télécharger l'historique et tout effacer</button>
+      </div>
+      <p class="note">Chaque semaine : 1) dépose les extractions Excel, 2) importe le dernier fichier d'historique, 3) consulte, 4) « Terminer ». Le CSV ne contient que des chiffres par collaborateur et par date, aucune donnée d'assuré.</p>
+    </div>
     <div class="row" style="margin-top:10px;font-size:13px">
       <label><input type="checkbox" id="remember" checked> Mémoriser les données sur ce poste</label>
       <span class="muted" id="storeInfo"></span>
@@ -169,11 +180,8 @@ details summary { cursor: pointer; color: var(--ink-2); }
 
     <section class="card" style="margin-top:16px">
       <h2>Évolution dans le temps</h2>
-      <p class="note" style="margin-top:0">Exporte un instantané chaque jour (fichier CSV agrégé, sans aucun nom d'assuré), puis recharge les instantanés précédents ici pour voir la tendance.</p>
+      <p class="note" style="margin-top:0">Les chiffres du jour s'ajoutent à l'historique importé (bouton « Importer l'historique » en haut de page).</p>
       <div class="row noprint" style="margin-bottom:12px">
-        <button class="primary" id="exportBtn">Exporter l'instantané du jour (.csv)</button>
-        <button id="loadSnapBtn">Charger des instantanés…</button>
-        <input type="file" id="snapInput" accept=".csv" multiple hidden>
         <button id="printBtn">Imprimer / PDF</button>
       </div>
       <div id="trend"></div>
@@ -410,6 +418,9 @@ details summary { cursor: pointer; color: var(--ink-2); }
   }
   function clearStored() {
     if (!confirm('Effacer toutes les données mémorisées sur ce poste (dossiers chargés et historique) ?')) return;
+    wipe();
+  }
+  function wipe() {
     var st = storage(); try { if (st) st.removeItem(STORE_KEY); } catch (e) {}
     state.files = {}; state.snapshots = {}; state.liveDay = null; $('refDate').value = '';
     render();
@@ -549,16 +560,35 @@ details summary { cursor: pointer; color: var(--ink-2); }
     return out;
   }
   var SNAP_HEAD = ['date', 'collaborateur', 'dossiers', 'en_retard', 'au_dela_seuil', 'mediane_jours', 'age_0_7', 'age_8_14', 'age_15_30', 'age_31_plus'];
-  function exportSnapshot() {
-    var rows = snapshotRows(); if (!rows.length) return;
+  function historyRows() {
+    var snaps = allSnaps(), rows = [];
+    Object.keys(snaps).sort().forEach(function (d) {
+      Object.keys(snaps[d]).sort().forEach(function (n) {
+        var r = snaps[d][n].slice(0, SNAP_HEAD.length);
+        while (r.length < SNAP_HEAD.length) r.push('');
+        rows.push(r);
+      });
+    });
+    return rows;
+  }
+  function exportHistory() {
+    var rows = historyRows();
+    if (!rows.length) { alert('Rien à télécharger : charge d\'abord les extractions Excel ou un historique.'); return false; }
     var csv = [SNAP_HEAD].concat(rows).map(function (r) {
       return r.map(function (c) { c = String(c); return /[;"\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(';');
     }).join('\r\n');
     var p = $('prestFilter').value;
     var a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
-    a.download = 'instantane_' + rows[0][0] + (p ? '_' + p.replace(/\W+/g, '-') : '') + '.csv';
+    a.download = 'historique_inbox_' + rows[rows.length - 1][0] + (p ? '_' + p.replace(/\W+/g, '-') : '') + '.csv';
     document.body.appendChild(a); a.click(); a.remove();
+    return true;
+  }
+  function endSession() {
+    if (!historyRows().length) { alert('Rien à télécharger ni à effacer.'); return; }
+    if (!confirm('Télécharger l\'historique puis effacer toutes les données de ce poste ?\n\nConserve le fichier téléchargé : tu l\'importeras la prochaine fois.')) return;
+    if (!exportHistory()) return;
+    wipe();
   }
   function readSnapshots(list) {
     Array.prototype.forEach.call(list, function (f) {
@@ -568,7 +598,7 @@ details summary { cursor: pointer; color: var(--ink-2); }
         lines.slice(1).forEach(function (l) {
           var c = l.split(';').map(function (x) { return x.replace(/^"|"$/g, ''); });
           if (c.length < 4 || !/^\d{4}-\d{2}-\d{2}$/.test(c[0])) return;
-          (state.snapshots[c[0]] = state.snapshots[c[0]] || {})[c[1]] = [c[0], c[1], +c[2], +c[3], +c[4] || 0, c[5] === '' || c[5] == null ? '' : +c[5]];
+          (state.snapshots[c[0]] = state.snapshots[c[0]] || {})[c[1]] = c.slice(0, SNAP_HEAD.length).map(function (x, i) { return i < 2 || x === '' || x == null ? x : +x; });
         });
         renderHistory();
         persist();
@@ -584,7 +614,11 @@ details summary { cursor: pointer; color: var(--ink-2); }
     live.forEach(function (r) { out[r[0]][r[1]] = r; });
     return out;
   }
-  function renderHistory() { renderTrend(); renderCompare(); }
+  function renderHistory() {
+    renderTrend(); renderCompare();
+    var days = Object.keys(allSnaps()).sort();
+    $('histInfo').textContent = days.length ? days.length + ' date' + (days.length > 1 ? 's' : '') + ', du ' + fmt(days[0]) + ' au ' + fmt(days[days.length - 1]) + '.' : 'Aucun historique chargé.';
+  }
   function renderTrend() {
     var snaps = allSnaps(), days = Object.keys(snaps).sort(), box = $('trend');
     if (days.length < 2) {
@@ -705,7 +739,8 @@ details summary { cursor: pointer; color: var(--ink-2); }
   ['dragleave', 'drop'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('over'); }); });
   drop.addEventListener('drop', function (e) { readFiles(e.dataTransfer.files); });
   ['refDate', 'threshold', 'prestFilter', 'pseudo', 'oldN', 'oldWho', 'showId'].forEach(function (id) { $(id).addEventListener('change', render); });
-  $('exportBtn').onclick = exportSnapshot;
+  $('exportBtn').onclick = exportHistory;
+  $('endBtn').onclick = endSession;
   $('loadSnapBtn').onclick = function () { $('snapInput').click(); };
   $('snapInput').onchange = function () { readSnapshots(this.files); this.value = ''; };
   ['cmpA', 'cmpB'].forEach(function (id) { $(id).addEventListener('change', renderCompare); });
