@@ -24,6 +24,7 @@
   --critical: #d03b3b;
   --warning: #fab219;
   --good: #0ca30c;
+  --good-text: #006300;
   --wash: rgba(42,120,214,0.08);
 }
 @media (prefers-color-scheme: dark) {
@@ -33,7 +34,7 @@
     --muted: #898781; --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
     --accent: #3987e5; --s1: #3987e5; --s2: #d95926;
     --b1: #184f95; --b2: #256abf; --b3: #5598e7; --b4: #9ec5f4;
-    --wash: rgba(57,135,229,0.12);
+    --wash: rgba(57,135,229,0.12); --good-text: #0ca30c;
   }
 }
 :root[data-theme="dark"] {
@@ -42,7 +43,7 @@
   --muted: #898781; --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
   --accent: #3987e5; --s1: #3987e5; --s2: #d95926;
   --b1: #184f95; --b2: #256abf; --b3: #5598e7; --b4: #9ec5f4;
-  --wash: rgba(57,135,229,0.12);
+  --wash: rgba(57,135,229,0.12); --good-text: #0ca30c;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
@@ -91,6 +92,10 @@ td.bar { width: 34%; min-width: 180px; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--ink-2); margin-bottom: 10px; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
 .hot { color: var(--critical); font-weight: 600; }
+.up { color: var(--critical); }
+.down { color: var(--good-text); }
+.flat { color: var(--muted); }
+.delta { font-size: 12px; margin-left: 6px; }
 .muted { color: var(--muted); }
 .note { font-size: 12px; color: var(--muted); margin-top: 8px; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
@@ -156,6 +161,16 @@ details summary { cursor: pointer; color: var(--ink-2); }
         <button id="printBtn">Imprimer / PDF</button>
       </div>
       <div id="trend"></div>
+    </section>
+
+    <section class="card">
+      <h2>Comparaison entre deux dates</h2>
+      <div class="row noprint" style="margin-bottom:12px">
+        <label>Du <select id="cmpA"></select></label>
+        <label>au <select id="cmpB"></select></label>
+      </div>
+      <div id="compare"></div>
+      <p class="note">▲ en rouge = augmentation (situation qui se dégrade), ▼ en vert = diminution. Les données chargées à l'écran comptent automatiquement comme instantané à la date de l'extraction. Compare des instantanés exportés avec le même filtre « Prestation ».</p>
     </section>
 
     <details class="card noprint">
@@ -341,7 +356,7 @@ details summary { cursor: pointer; color: var(--ink-2); }
     renderCollab(items, ref, thr, tot);
     renderCross(items, 'statut', $('statusTable'), 'Statut');
     renderCross(items, 'type', $('typeTable'), 'Type de transaction');
-    renderTrend();
+    renderHistory();
     renderDiag();
   }
 
@@ -446,8 +461,6 @@ details summary { cursor: pointer; color: var(--ink-2); }
     a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
     a.download = 'instantane_' + rows[0][0] + (p ? '_' + p.replace(/\W+/g, '-') : '') + '.csv';
     document.body.appendChild(a); a.click(); a.remove();
-    rows.forEach(function (r) { (state.snapshots[r[0]] = state.snapshots[r[0]] || {})[r[1]] = r; });
-    renderTrend();
   }
   function readSnapshots(list) {
     Array.prototype.forEach.call(list, function (f) {
@@ -457,21 +470,30 @@ details summary { cursor: pointer; color: var(--ink-2); }
         lines.slice(1).forEach(function (l) {
           var c = l.split(';').map(function (x) { return x.replace(/^"|"$/g, ''); });
           if (c.length < 4 || !/^\d{4}-\d{2}-\d{2}$/.test(c[0])) return;
-          (state.snapshots[c[0]] = state.snapshots[c[0]] || {})[c[1]] = [c[0], c[1], +c[2], +c[3], +c[4] || 0];
+          (state.snapshots[c[0]] = state.snapshots[c[0]] || {})[c[1]] = [c[0], c[1], +c[2], +c[3], +c[4] || 0, c[5] === '' || c[5] == null ? '' : +c[5]];
         });
-        renderTrend();
+        renderHistory();
       };
       fr.readAsText(f, 'utf-8');
     });
   }
+  function allSnaps() {
+    var out = {};
+    Object.keys(state.snapshots).forEach(function (d) { out[d] = Object.assign({}, state.snapshots[d]); });
+    var live = snapshotRows();
+    if (live.length) out[live[0][0]] = {};
+    live.forEach(function (r) { out[r[0]][r[1]] = r; });
+    return out;
+  }
+  function renderHistory() { renderTrend(); renderCompare(); }
   function renderTrend() {
-    var days = Object.keys(state.snapshots).sort(), box = $('trend');
+    var snaps = allSnaps(), days = Object.keys(snaps).sort(), box = $('trend');
     if (days.length < 2) {
       box.innerHTML = '<div class="empty">' + (days.length ? 'Un seul jour disponible — il faut au moins deux instantanés pour une tendance.' : 'Aucun instantané chargé.') + '</div>';
       return;
     }
     var pts = days.map(function (d) {
-      var t = 0, l = 0; Object.keys(state.snapshots[d]).forEach(function (r) { t += +state.snapshots[d][r][2]; l += +state.snapshots[d][r][3]; });
+      var t = 0, l = 0; Object.keys(snaps[d]).forEach(function (r) { t += +snaps[d][r][2]; l += +snaps[d][r][3]; });
       return { d: d, t: t, l: l };
     });
     var W = Math.max(320, box.clientWidth || 800), H = 220, L = 44, R = 70, T = 12, B = 28, maxY = Math.max.apply(null, pts.map(function (p) { return p.t; }).concat([1]));
@@ -510,6 +532,43 @@ details summary { cursor: pointer; color: var(--ink-2); }
         cross.setAttribute('visibility', on ? 'visible' : 'hidden'); cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i));
       });
     });
+  }
+  function renderCompare() {
+    var snaps = allSnaps(), days = Object.keys(snaps).sort(), box = $('compare'), selA = $('cmpA'), selB = $('cmpB');
+    if (days.length < 2) {
+      selA.innerHTML = selB.innerHTML = '';
+      box.innerHTML = '<div class="empty">Charge au moins un instantané précédent (par ex. celui de la semaine passée) pour comparer.</div>';
+      return;
+    }
+    var b = days.indexOf(selB.value) >= 0 ? selB.value : days[days.length - 1];
+    var a = selA.value;
+    if (days.indexOf(a) < 0 || a >= b) { // par défaut : l'instantané le plus proche d'une semaine avant
+      var target = isoDay(new Date(Date.parse(b) - 7 * 86400000));
+      a = days.filter(function (d) { return d <= target; }).pop() || days[0];
+      if (a >= b) a = days[days.indexOf(b) - 1] || days[0];
+    }
+    var opts = function (cur) { return days.map(function (d) { return '<option value="' + d + '"' + (d === cur ? ' selected' : '') + '>' + fmt(d) + '</option>'; }).join(''); };
+    selA.innerHTML = opts(a); selB.innerHTML = opts(b);
+    var A = snaps[a], B = snaps[b], names = Object.keys(A).concat(Object.keys(B)).filter(function (n, i, arr) { return arr.indexOf(n) === i; });
+    var alias = aliasMap(names), metrics = [[2, 'Dossiers'], [3, 'En retard'], [4, '> seuil'], [5, 'Médiane (j)']];
+    var cell = function (ra, rb, k) {
+      var vb = rb ? rb[k] : '', va = ra ? ra[k] : '';
+      if (vb === '' || vb == null) return '<td class="muted">–</td>';
+      if (va === '' || va == null) return '<td>' + vb + '<span class="delta muted">nouveau</span></td>';
+      var d = +vb - +va;
+      return '<td>' + vb + '<span class="delta ' + (d > 0 ? 'up">▲ +' + d : d < 0 ? 'down">▼ ' + d : 'flat">= 0') + '</span></td>';
+    };
+    var tot = function (S) { var t = [0, 0, 0, 0, 0, '']; Object.keys(S).forEach(function (n) { for (var k = 2; k <= 4; k++) t[k] += +S[n][k] || 0; }); return t; };
+    var rows = names.map(function (n) { return { n: n, a: A[n], b: B[n] }; })
+      .sort(function (x, y) { return ((y.b ? +y.b[2] : 0) - (y.a ? +y.a[2] : 0)) - ((x.b ? +x.b[2] : 0) - (x.a ? +x.a[2] : 0)); });
+    box.innerHTML = '<div class="scroll"><table><thead><tr><th style="cursor:default">Collaborateur</th>' +
+      metrics.map(function (m) { return '<th style="cursor:default">' + m[1] + '</th>'; }).join('') + '</tr></thead><tbody>' +
+      rows.map(function (r) {
+        return '<tr><td>' + esc(alias[r.n]) + (r.b ? '' : ' <span class="muted">(absent le ' + fmt(b) + ')</span>') + '</td>' +
+          metrics.map(function (m) { return cell(r.a, r.b, m[0]); }).join('') + '</tr>';
+      }).join('') +
+      '<tr class="total"><td>Total équipe</td>' + metrics.map(function (m) { return m[0] === 5 ? '<td></td>' : cell(tot(A), tot(B), m[0]); }).join('') +
+      '</tr></tbody></table></div><p class="note">Comparaison du ' + fmt(a) + ' au ' + fmt(b) + ' (' + Math.round((Date.parse(b) - Date.parse(a)) / 86400000) + ' jours). Tri : plus forte hausse du nombre de dossiers en premier.</p>';
   }
   function fmt(d) { return d.slice(8) + '.' + d.slice(5, 7) + '.' + d.slice(0, 4); }
   function sign(n) { return (n > 0 ? '+' : '') + n; }
@@ -550,6 +609,7 @@ details summary { cursor: pointer; color: var(--ink-2); }
   $('exportBtn').onclick = exportSnapshot;
   $('loadSnapBtn').onclick = function () { $('snapInput').click(); };
   $('snapInput').onchange = function () { readSnapshots(this.files); this.value = ''; };
+  ['cmpA', 'cmpB'].forEach(function (id) { $(id).addEventListener('change', renderCompare); });
   $('printBtn').onclick = function () { window.print(); };
   var rz; window.addEventListener('resize', function () { clearTimeout(rz); rz = setTimeout(renderTrend, 150); });
   render();
