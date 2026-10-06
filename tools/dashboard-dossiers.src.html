@@ -111,7 +111,7 @@ details summary { cursor: pointer; color: var(--ink-2); }
 <body>
 <main>
   <h1>Suivi des inbox <span class="badge">Traitement 100 % local</span></h1>
-  <p class="lead">Glisse les extractions Excel du jour. Les fichiers sont lus dans ce navigateur uniquement : rien n'est envoyé, rien n'est enregistré. Les colonnes <em>Description</em> et <em>Bénéficiaire</em> (identité des assurés) sont ignorées dès la lecture.</p>
+  <p class="lead">Glisse les extractions Excel du jour. Les fichiers sont lus dans ce navigateur uniquement : rien n'est envoyé. Ils restent mémorisés dans ce navigateur, sur ce poste uniquement, jusqu'à leur effacement (automatique après 30 jours). Les colonnes <em>Description</em> et <em>Bénéficiaire</em> (identité des assurés) sont ignorées dès la lecture.</p>
 
   <section class="card noprint">
     <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choisir des fichiers Excel">
@@ -120,6 +120,11 @@ details summary { cursor: pointer; color: var(--ink-2); }
       <input type="file" id="fileInput" accept=".xlsx,.xls,.xlsm,.csv" multiple hidden>
     </div>
     <ul class="files" id="fileList"></ul>
+    <div class="row" style="margin-top:10px;font-size:13px">
+      <label><input type="checkbox" id="remember" checked> Mémoriser les données sur ce poste</label>
+      <span class="muted" id="storeInfo"></span>
+      <button id="clearBtn" style="margin-left:auto">Effacer les données mémorisées</button>
+    </div>
     <div class="row" style="margin-top:14px">
       <label>Date de l'extraction <input type="date" id="refDate"></label>
       <label>Seuil d'alerte (jours en inbox) <input type="number" id="threshold" min="1" value="30"></label>
@@ -303,7 +308,7 @@ details summary { cursor: pointer; color: var(--ink-2); }
         try {
           var wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array', cellDates: true, dense: false });
           state.files[f.name] = parseWorkbook(f.name, wb);
-          if (!$('refDate').value && f.lastModified) $('refDate').value = isoDay(new Date(f.lastModified));
+          if (f.lastModified && isoDay(new Date(f.lastModified)) > ($('refDate').value || '')) $('refDate').value = isoDay(new Date(f.lastModified));
         } catch (err) {
           state.files[f.name] = { name: f.name, error: 'Lecture impossible : ' + err.message };
         }
@@ -357,6 +362,59 @@ details summary { cursor: pointer; color: var(--ink-2); }
     return m;
   }
 
+  // ---- Mémorisation locale (navigateur de ce poste ; jamais Description / Bénéficiaire) ----
+  var STORE_KEY = 'suiviInbox.v1', RETENTION_DAYS = 30;
+  function storage() { try { return window.localStorage; } catch (e) { return null; } }
+  function recordLiveSnapshot() {
+    if ($('prestFilter').value) return; // l'historique automatique porte sur toutes les prestations
+    var rows = snapshotRows();
+    if (state.liveDay && state.liveDay !== (rows[0] && rows[0][0])) delete state.snapshots[state.liveDay];
+    state.liveDay = rows.length ? rows[0][0] : null;
+    if (!rows.length) return;
+    state.snapshots[rows[0][0]] = {};
+    rows.forEach(function (r) { state.snapshots[r[0]][r[1]] = r; });
+  }
+  function persist() {
+    var st = storage(); if (!st) return;
+    try {
+      if (!$('remember').checked) { st.removeItem(STORE_KEY); $('storeInfo').textContent = 'Rien n\'est conservé après fermeture.'; return; }
+      recordLiveSnapshot();
+      var files = {};
+      Object.keys(state.files).forEach(function (n) {
+        var f = state.files[n]; if (!f.items) return;
+        files[n] = { name: n, prest: f.prest, map: f.map, lateValues: f.lateValues, savedAt: f.savedAt || Date.now(),
+          items: f.items.map(function (it) { return [it.resp, it.statut, it.type, it.inbox ? isoDay(it.inbox) : '', it.late ? 1 : 0, it.id]; }) };
+        f.savedAt = files[n].savedAt;
+      });
+      if (!Object.keys(files).length && !Object.keys(state.snapshots).length) { st.removeItem(STORE_KEY); $('storeInfo').textContent = ''; return; }
+      st.setItem(STORE_KEY, JSON.stringify({ v: 1, refDate: $('refDate').value, threshold: $('threshold').value, files: files, snapshots: state.snapshots }));
+      var times = Object.keys(files).map(function (n) { return files[n].savedAt; });
+      $('storeInfo').textContent = times.length ? 'Données mémorisées depuis le ' + dmy(new Date(Math.min.apply(null, times))) +
+        ' · effacement automatique le ' + dmy(new Date(Math.min.apply(null, times) + RETENTION_DAYS * 86400000)) + '.' : '';
+    } catch (e) { $('storeInfo').textContent = 'Mémorisation impossible sur ce poste (' + e.name + ').'; }
+  }
+  function restore() {
+    var st = storage(); if (!st) return;
+    try {
+      var raw = st.getItem(STORE_KEY); if (!raw) return;
+      var d = JSON.parse(raw), limit = Date.now() - RETENTION_DAYS * 86400000;
+      if (d.refDate) $('refDate').value = d.refDate;
+      if (d.threshold) $('threshold').value = d.threshold;
+      state.snapshots = d.snapshots || {};
+      Object.keys(d.files || {}).forEach(function (n) {
+        var f = d.files[n]; if (!(f.savedAt > limit)) return; // détail des dossiers : 30 jours au plus
+        state.files[n] = { name: n, prest: f.prest, map: f.map, lateValues: f.lateValues, savedAt: f.savedAt,
+          items: f.items.map(function (a) { return { resp: a[0], statut: a[1], type: a[2], inbox: toDate(a[3]), late: !!a[4], id: a[5] }; }) };
+      });
+    } catch (e) { /* données illisibles : on repart de zéro */ }
+  }
+  function clearStored() {
+    if (!confirm('Effacer toutes les données mémorisées sur ce poste (dossiers chargés et historique) ?')) return;
+    var st = storage(); try { if (st) st.removeItem(STORE_KEY); } catch (e) {}
+    state.files = {}; state.snapshots = {}; state.liveDay = null; $('refDate').value = '';
+    render();
+  }
+
   // ---- Rendu ----
   function render() {
     renderFiles();
@@ -371,6 +429,7 @@ details summary { cursor: pointer; color: var(--ink-2); }
     renderCross(items, 'type', $('typeTable'), 'Type de transaction');
     renderHistory();
     renderDiag();
+    persist();
   }
 
   function renderFiles() {
@@ -512,6 +571,7 @@ details summary { cursor: pointer; color: var(--ink-2); }
           (state.snapshots[c[0]] = state.snapshots[c[0]] || {})[c[1]] = [c[0], c[1], +c[2], +c[3], +c[4] || 0, c[5] === '' || c[5] == null ? '' : +c[5]];
         });
         renderHistory();
+        persist();
       };
       fr.readAsText(f, 'utf-8');
     });
@@ -650,7 +710,10 @@ details summary { cursor: pointer; color: var(--ink-2); }
   $('snapInput').onchange = function () { readSnapshots(this.files); this.value = ''; };
   ['cmpA', 'cmpB'].forEach(function (id) { $(id).addEventListener('change', renderCompare); });
   $('printBtn').onclick = function () { window.print(); };
+  $('remember').addEventListener('change', render);
+  $('clearBtn').onclick = clearStored;
   var rz; window.addEventListener('resize', function () { clearTimeout(rz); rz = setTimeout(renderTrend, 150); });
+  restore();
   render();
 })();
 </script>
