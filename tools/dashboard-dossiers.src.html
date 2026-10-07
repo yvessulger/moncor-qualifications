@@ -104,6 +104,7 @@ td.bar { width: 34%; min-width: 180px; }
 #trendSvg { width: 100%; height: auto; display: block; }
 .empty { color: var(--muted); text-align: center; padding: 28px 0; }
 details summary { cursor: pointer; color: var(--ink-2); }
+#filesBox { margin-top: 12px; font-size: 13px; }
 .hidden { display: none !important; }
 .session { margin-top: 14px; padding: 12px 14px; border-radius: 8px; background: var(--wash); }
 @media print { .noprint { display: none !important; } body { background: #fff; } }
@@ -120,7 +121,15 @@ details summary { cursor: pointer; color: var(--ink-2); }
       ou clique pour les choisir (un fichier par collaborateur et par prestation, plusieurs à la fois possible)
       <input type="file" id="fileInput" accept=".xlsx,.xls,.xlsm,.csv" multiple hidden>
     </div>
-    <ul class="files" id="fileList"></ul>
+    <details id="filesBox" class="hidden">
+      <summary id="filesSummary"></summary>
+      <ul class="files" id="fileList"></ul>
+    <div class="row" style="margin-top:10px;font-size:13px">
+      <label><input type="checkbox" id="remember" checked> Mémoriser les données sur ce poste</label>
+      <span class="muted" id="storeInfo"></span>
+      <button id="clearBtn" style="margin-left:auto">Effacer les données mémorisées</button>
+    </div>
+    </details>
     <div class="session">
       <div><strong>Historique</strong> <span class="muted" id="histInfo">Aucun historique chargé.</span></div>
       <div class="row" style="margin-top:8px">
@@ -130,11 +139,6 @@ details summary { cursor: pointer; color: var(--ink-2); }
         <button class="primary" id="endBtn">Terminer : télécharger l'historique et tout effacer</button>
       </div>
       <p class="note">Chaque semaine : 1) dépose les extractions Excel, 2) importe le dernier fichier d'historique, 3) consulte, 4) « Terminer ». Le CSV ne contient que des chiffres par collaborateur et par date, aucune donnée d'assuré.</p>
-    </div>
-    <div class="row" style="margin-top:10px;font-size:13px">
-      <label><input type="checkbox" id="remember" checked> Mémoriser les données sur ce poste</label>
-      <span class="muted" id="storeInfo"></span>
-      <button id="clearBtn" style="margin-left:auto">Effacer les données mémorisées</button>
     </div>
     <div class="row" style="margin-top:14px">
       <label>Date de l'extraction <input type="date" id="refDate"></label>
@@ -445,7 +449,12 @@ details summary { cursor: pointer; color: var(--ink-2); }
 
   function renderFiles() {
     var ul = $('fileList'); ul.innerHTML = '';
-    var prests = {};
+    var prests = {}, names = Object.keys(state.files), nItems = 0, nErr = 0;
+    names.forEach(function (n) { if (state.files[n].items) nItems += state.files[n].items.length; else nErr++; });
+    $('filesBox').classList.toggle('hidden', !names.length);
+    if (nErr) $('filesBox').open = true;
+    $('filesSummary').innerHTML = names.length + ' fichier' + (names.length > 1 ? 's' : '') + ' chargé' + (names.length > 1 ? 's' : '') +
+      ' · ' + nItems.toLocaleString('fr-CH') + ' dossiers' + (nErr ? ' · <span class="warn">' + nErr + ' en erreur</span>' : '') + ' <span class="muted">(détails)</span>';
     Object.keys(state.files).sort().forEach(function (n) {
       var f = state.files[n], li = document.createElement('li');
       if (f.items) prests[f.prest] = 1;
