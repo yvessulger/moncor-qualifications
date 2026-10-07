@@ -106,6 +106,10 @@ td.bar { width: 34%; min-width: 180px; }
 details summary { cursor: pointer; color: var(--ink-2); }
 #filesBox { margin-top: 12px; font-size: 13px; }
 .hidden { display: none !important; }
+.files input[type=date] { padding: 1px 4px; font-size: 12px; }
+tr.group td { font-weight: 600; background: var(--wash); }
+tr.group td:first-child { border-radius: 6px 0 0 6px; }
+code { font-size: 12px; }
 .session { margin-top: 14px; padding: 12px 14px; border-radius: 8px; background: var(--wash); }
 @media print { .noprint { display: none !important; } body { background: #fff; } }
 </style>
@@ -118,7 +122,7 @@ details summary { cursor: pointer; color: var(--ink-2); }
   <section class="card noprint">
     <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choisir des fichiers Excel">
       <strong>Dépose ici les fichiers .xlsx / .xls / .csv</strong><br>
-      ou clique pour les choisir (un fichier par collaborateur et par prestation, plusieurs à la fois possible)
+      ou clique pour les choisir · nom conseillé : <code>MJA_IC Droit.xlsx</code>, <code>MJA_IC PC.xlsx</code>, <code>MJA_VA.xlsx</code>
       <input type="file" id="fileInput" accept=".xlsx,.xls,.xlsm,.csv" multiple hidden>
     </div>
     <details id="filesBox" class="hidden">
@@ -138,10 +142,10 @@ details summary { cursor: pointer; color: var(--ink-2); }
         <button id="exportBtn">Télécharger l'historique (.csv)</button>
         <button class="primary" id="endBtn">Terminer : télécharger l'historique et tout effacer</button>
       </div>
-      <p class="note">Chaque semaine : 1) dépose les extractions Excel, 2) importe le dernier fichier d'historique, 3) consulte, 4) « Terminer ». Le CSV ne contient que des chiffres par collaborateur et par date, aucune donnée d'assuré.</p>
+      <p class="note">Chaque semaine : 1) dépose les extractions Excel, 2) importe le dernier fichier d'historique, 3) consulte, 4) « Terminer ». Le CSV ne contient que des chiffres par date, prestation et collaborateur, aucune donnée d'assuré.</p>
     </div>
     <div class="row" style="margin-top:14px">
-      <label>Date de l'extraction <input type="date" id="refDate"></label>
+      <label>Jour affiché <select id="viewDay"></select></label>
       <label>Seuil d'alerte (jours en inbox) <input type="number" id="threshold" min="1" value="30"></label>
       <label>Prestation
         <select id="prestFilter"><option value="">Toutes</option></select>
@@ -157,7 +161,7 @@ details summary { cursor: pointer; color: var(--ink-2); }
       <h2>Charge et ancienneté par collaborateur</h2>
       <div class="legend" id="ageLegend"></div>
       <div class="scroll"><table id="collabTable"></table></div>
-      <p class="note">Ancienneté = jours entre la « Date inbox » et la date de l'extraction. « Plus ancien » = date inbox du dossier le plus ancien (en rouge au-delà du seuil). « En retard » reprend l'indicateur du système.</p>
+      <p class="note">Ancienneté = jours entre la « Date inbox » et la date d'extraction du fichier. « Plus ancien » = date inbox du dossier le plus ancien (en rouge au-delà du seuil). « En retard » reprend l'indicateur du système.</p>
     </section>
 
     <section class="card">
@@ -198,7 +202,7 @@ details summary { cursor: pointer; color: var(--ink-2); }
         <label>au <select id="cmpB"></select></label>
       </div>
       <div id="compare"></div>
-      <p class="note">▲ en rouge = augmentation (situation qui se dégrade), ▼ en vert = diminution. Les données chargées à l'écran comptent automatiquement comme instantané à la date de l'extraction. Compare des instantanés exportés avec le même filtre « Prestation ».</p>
+      <p class="note">Par prestation puis par collaborateur. ▲ en rouge = augmentation, ▼ en vert = diminution. Le filtre « Prestation » en haut de page limite la comparaison à une prestation.</p>
     </section>
 
     <details class="card noprint">
@@ -256,7 +260,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     { max: Infinity, label: '> 30 j', v: '--b4' }
   ];
 
-  var state = { files: {}, snapshots: {}, sort: { key: 'total', asc: false } };
+  var state = { files: {}, snapshots: {}, viewDay: '', sort: { key: 'total', asc: false } };
+  var OLD_PREST = '(ancien format)';
   var $ = function (id) { return document.getElementById(id); };
 
   function norm(s) {
@@ -290,7 +295,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     var s = norm(v);
     return !(s === '' || s === 'non' || s === 'no' || s === 'n' || s === '0' || s === 'false' || s === 'faux');
   }
-  function refDate() { return toDate($('refDate').value) || new Date(); }
+  function refDate() { return toDate(state.viewDay) || new Date(); }
 
   // ---- Lecture d'un fichier : seules les colonnes utiles sont conservées ----
   function parseWorkbook(name, wb) {
@@ -330,9 +335,15 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     rows = null; // libère les données brutes (dont les noms d'assurés)
     return { name: name, items: items, map: map, lateValues: lateValues, prest: guessPrest(name) };
   }
+  var DATE_IN_NAME = /(\d{4})[-.](\d{2})[-.](\d{2})|(\d{2})[-.](\d{2})[-.](\d{4})/;
+  function dateFromName(name) {
+    var m = name.match(DATE_IN_NAME); if (!m) return '';
+    return m[1] ? m[1] + '-' + m[2] + '-' + m[3] : m[6] + '-' + m[5] + '-' + m[4];
+  }
   function guessPrest(name) {
-    var base = name.replace(/\.[^.]+$/, '').split(/[ _-]+/);
-    return base.length > 1 ? base.slice(1).join(' ') : '(non précisé)';
+    var base = name.replace(/\.[^.]+$/, '').replace(DATE_IN_NAME, ' ').split(/[ _-]+/).filter(Boolean);
+    if (base.length < 2) return '(non précisé)';
+    return base.slice(1).map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join(' ');
   }
 
   function readFiles(list) {
@@ -341,10 +352,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       fr.onload = function (e) {
         try {
           var wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array', cellDates: true, dense: false });
-          state.files[f.name] = parseWorkbook(f.name, wb);
-          if (f.lastModified && isoDay(new Date(f.lastModified)) > ($('refDate').value || '')) $('refDate').value = isoDay(new Date(f.lastModified));
+          addFile(parseWorkbook(f.name, wb), dateFromName(f.name) || isoDay(f.lastModified ? new Date(f.lastModified) : new Date()));
         } catch (err) {
-          state.files[f.name] = { name: f.name, error: 'Lecture impossible : ' + err.message };
+          state.files['?' + f.name] = { name: f.name, key: '?' + f.name, error: 'Lecture impossible : ' + err.message };
         }
         render();
       };
@@ -352,12 +362,35 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     });
   }
 
+  // Un fichier = un nom + une date d'extraction : le même fichier d'hier et d'aujourd'hui coexistent.
+  function addFile(f, day) {
+    f.day = day; f.key = day + '|' + f.name;
+    if (!f.items) { state.files[f.key] = f; return; }
+    forgetRows(state.files[f.key]);
+    state.files[f.key] = f;
+    state.viewDay = fileDays().pop();
+  }
+  function removeFile(key) { forgetRows(state.files[key]); delete state.files[key]; }
+  function setFileDay(key, day) {
+    var f = state.files[key]; if (!f || !day || day === f.day) return;
+    removeFile(key); addFile(f, day);
+  }
+  function forgetRows(f) { // retire de l'historique les chiffres issus de ce fichier
+    if (!f || !f.items || !state.snapshots[f.day]) return;
+    f.items.forEach(function (it) { delete state.snapshots[f.day][f.prest + '\t' + it.resp]; });
+  }
+  function fileDays() {
+    var d = {};
+    Object.keys(state.files).forEach(function (k) { if (state.files[k].items) d[state.files[k].day] = 1; });
+    return Object.keys(d).sort();
+  }
+
   // ---- Agrégation ----
   function allItems() {
     var p = $('prestFilter').value, out = [];
     Object.keys(state.files).forEach(function (n) {
       var f = state.files[n]; if (!f.items) return;
-      if (p && f.prest !== p) return;
+      if (f.day !== state.viewDay || (p && f.prest !== p)) return;
       f.items.forEach(function (it) { out.push(it); });
     });
     return out;
@@ -399,30 +432,21 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   // ---- Mémorisation locale (navigateur de ce poste ; jamais Description / Bénéficiaire) ----
   var STORE_KEY = 'suiviInbox.v1', RETENTION_DAYS = 30;
   function storage() { try { return window.localStorage; } catch (e) { return null; } }
-  function recordLiveSnapshot() {
-    if ($('prestFilter').value) return; // l'historique automatique porte sur toutes les prestations
-    var rows = snapshotRows();
-    if (state.liveDay && state.liveDay !== (rows[0] && rows[0][0])) delete state.snapshots[state.liveDay];
-    state.liveDay = rows.length ? rows[0][0] : null;
-    if (!rows.length) return;
-    state.snapshots[rows[0][0]] = {};
-    rows.forEach(function (r) { state.snapshots[r[0]][r[1]] = r; });
-  }
   function persist() {
     var st = storage(); if (!st) return;
     try {
       if (!$('remember').checked) { st.removeItem(STORE_KEY); $('storeInfo').textContent = 'Rien n\'est conservé après fermeture.'; return; }
-      recordLiveSnapshot();
+      state.snapshots = allSnaps(); // les chiffres des fichiers chargés rejoignent l'historique
       var files = {};
-      Object.keys(state.files).forEach(function (n) {
-        var f = state.files[n]; if (!f.items) return;
-        files[n] = { name: n, prest: f.prest, map: f.map, lateValues: f.lateValues, savedAt: f.savedAt || Date.now(),
+      Object.keys(state.files).forEach(function (k) {
+        var f = state.files[k]; if (!f.items) return;
+        f.savedAt = f.savedAt || Date.now();
+        files[k] = { name: f.name, day: f.day, prest: f.prest, map: f.map, lateValues: f.lateValues, savedAt: f.savedAt,
           items: f.items.map(function (it) { return [it.resp, it.statut, it.type, it.inbox ? isoDay(it.inbox) : '', it.late ? 1 : 0, it.id]; }) };
-        f.savedAt = files[n].savedAt;
       });
       if (!Object.keys(files).length && !Object.keys(state.snapshots).length) { st.removeItem(STORE_KEY); $('storeInfo').textContent = ''; return; }
-      st.setItem(STORE_KEY, JSON.stringify({ v: 1, refDate: $('refDate').value, threshold: $('threshold').value, files: files, snapshots: state.snapshots }));
-      var times = Object.keys(files).map(function (n) { return files[n].savedAt; });
+      st.setItem(STORE_KEY, JSON.stringify({ v: 2, viewDay: state.viewDay, threshold: $('threshold').value, files: files, snapshots: state.snapshots }));
+      var times = Object.keys(files).map(function (k) { return files[k].savedAt; });
       $('storeInfo').textContent = times.length ? 'Données mémorisées depuis le ' + dmy(new Date(Math.min.apply(null, times))) +
         ' · effacement automatique le ' + dmy(new Date(Math.min.apply(null, times) + RETENTION_DAYS * 86400000)) + '.' : '';
     } catch (e) { $('storeInfo').textContent = 'Mémorisation impossible sur ce poste (' + e.name + ').'; }
@@ -432,14 +456,24 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     try {
       var raw = st.getItem(STORE_KEY); if (!raw) return;
       var d = JSON.parse(raw), limit = Date.now() - RETENTION_DAYS * 86400000;
-      if (d.refDate) $('refDate').value = d.refDate;
       if (d.threshold) $('threshold').value = d.threshold;
-      state.snapshots = d.snapshots || {};
-      Object.keys(d.files || {}).forEach(function (n) {
-        var f = d.files[n]; if (!(f.savedAt > limit)) return; // détail des dossiers : 30 jours au plus
-        state.files[n] = { name: n, prest: f.prest, map: f.map, lateValues: f.lateValues, savedAt: f.savedAt,
+      var snaps = d.snapshots || {};
+      Object.keys(snaps).forEach(function (day) { // ancien format (v1) : pas de prestation
+        Object.keys(snaps[day]).forEach(function (k) {
+          if (k.indexOf('\t') >= 0) return;
+          var r = snaps[day][k]; delete snaps[day][k];
+          snaps[day][OLD_PREST + '\t' + k] = [r[0], OLD_PREST].concat(r.slice(1));
+        });
+      });
+      state.snapshots = snaps;
+      Object.keys(d.files || {}).forEach(function (k) {
+        var f = d.files[k]; if (!(f.savedAt > limit)) return; // détail des dossiers : 30 jours au plus
+        var day = f.day || d.refDate || isoDay(new Date(f.savedAt)), name = f.name || k;
+        state.files[day + '|' + name] = { name: name, key: day + '|' + name, day: day, prest: f.prest, map: f.map, lateValues: f.lateValues, savedAt: f.savedAt,
           items: f.items.map(function (a) { return { resp: a[0], statut: a[1], type: a[2], inbox: toDate(a[3]), late: !!a[4], id: a[5] }; }) };
       });
+      var days = fileDays();
+      state.viewDay = days.indexOf(d.viewDay || d.refDate) >= 0 ? (d.viewDay || d.refDate) : days.pop() || '';
     } catch (e) { /* données illisibles : on repart de zéro */ }
   }
   function clearStored() {
@@ -448,7 +482,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   }
   function wipe() {
     var st = storage(); try { if (st) st.removeItem(STORE_KEY); } catch (e) {}
-    state.files = {}; state.snapshots = {}; state.liveDay = null; $('refDate').value = '';
+    state.files = {}; state.snapshots = {}; state.viewDay = ''; state.cmp = null;
     render();
   }
 
@@ -477,16 +511,22 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     if (nErr) $('filesBox').open = true;
     $('filesSummary').innerHTML = names.length + ' fichier' + (names.length > 1 ? 's' : '') + ' chargé' + (names.length > 1 ? 's' : '') +
       ' · ' + nItems.toLocaleString('fr-CH') + ' dossiers' + (nErr ? ' · <span class="warn">' + nErr + ' en erreur</span>' : '') + ' <span class="muted">(détails)</span>';
-    Object.keys(state.files).sort().forEach(function (n) {
-      var f = state.files[n], li = document.createElement('li');
+    Object.keys(state.files).sort().reverse().forEach(function (k) {
+      var f = state.files[k], li = document.createElement('li');
       if (f.items) prests[f.prest] = 1;
-      li.innerHTML = '<span>' + esc(n) + '</span>' + (f.error
+      li.innerHTML = (f.items ? '<input type="date" aria-label="Date d\'extraction" value="' + f.day + '">' : '') + '<span>' + esc(f.name) + '</span>' + (f.error
         ? '<span class="warn">' + esc(f.error) + '</span>'
         : '<span class="muted">' + f.items.length + ' dossiers · prestation : ' + esc(f.prest) + '</span>') +
         '<button class="x" aria-label="Retirer">✕</button>';
-      li.querySelector('.x').onclick = function () { delete state.files[n]; render(); };
+      li.querySelector('.x').onclick = function () { removeFile(k); render(); };
+      var di = li.querySelector('input[type=date]');
+      if (di) di.onchange = function () { setFileDay(k, di.value); render(); };
       ul.appendChild(li);
     });
+    Object.keys(state.snapshots).forEach(function (d) { Object.keys(state.snapshots[d]).forEach(function (k) { var p = k.split('\t')[0]; if (p !== OLD_PREST) prests[p] = 1; }); });
+    var days = fileDays();
+    if (days.indexOf(state.viewDay) < 0) state.viewDay = days[days.length - 1] || '';
+    $('viewDay').innerHTML = days.length ? days.slice().reverse().map(function (d) { return '<option value="' + d + '"' + (d === state.viewDay ? ' selected' : '') + '>' + fmt(d) + '</option>'; }).join('') : '<option value="">–</option>';
     var sel = $('prestFilter'), cur = sel.value;
     sel.innerHTML = '<option value="">Toutes</option>' + Object.keys(prests).sort().map(function (p) {
       return '<option' + (p === cur ? ' selected' : '') + '>' + esc(p) + '</option>';
@@ -580,22 +620,41 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       }).join('') + '</tbody>';
   }
 
-  // ---- Instantanés agrégés (aucune donnée d'assuré) ----
-  function snapshotRows() {
-    var items = allItems(), ref = refDate(), thr = +$('threshold').value || 30, day = isoDay(ref);
-    var g = groupBy(items, 'resp'), out = [];
-    Object.keys(g).sort().forEach(function (r) {
-      var s = summarize(g[r], ref, thr);
-      out.push([day, r, s.total, s.late, s.over, s.med == null ? '' : s.med].concat(s.buckets));
+  // ---- Instantanés agrégés (aucune donnée d'assuré) : une ligne par date × prestation × collaborateur ----
+  var SNAP_HEAD = ['date', 'prestation', 'collaborateur', 'dossiers', 'en_retard', 'au_dela_seuil', 'mediane_jours', 'age_0_7', 'age_8_14', 'age_15_30', 'age_31_plus'];
+  var C = { date: 0, prest: 1, resp: 2, total: 3, late: 4, over: 5, med: 6 };
+  function liveRows() {
+    var thr = +$('threshold').value || 30, g = {}, out = [];
+    Object.keys(state.files).forEach(function (k) {
+      var f = state.files[k]; if (!f.items) return;
+      f.items.forEach(function (it) { var key = f.day + '\t' + f.prest + '\t' + it.resp; (g[key] = g[key] || []).push(it); });
+    });
+    Object.keys(g).sort().forEach(function (key) {
+      var p = key.split('\t'), s = summarize(g[key], toDate(p[0]), thr);
+      out.push([p[0], p[1], p[2], s.total, s.late, s.over, s.med == null ? '' : s.med].concat(s.buckets));
     });
     return out;
   }
-  var SNAP_HEAD = ['date', 'collaborateur', 'dossiers', 'en_retard', 'au_dela_seuil', 'mediane_jours', 'age_0_7', 'age_8_14', 'age_15_30', 'age_31_plus'];
+  function allSnaps() {
+    var out = {};
+    Object.keys(state.snapshots).forEach(function (d) { out[d] = Object.assign({}, state.snapshots[d]); });
+    liveRows().forEach(function (r) { (out[r[0]] = out[r[0]] || {})[r[1] + '\t' + r[2]] = r; });
+    Object.keys(out).forEach(function (d) { if (!Object.keys(out[d]).length) delete out[d]; });
+    return out;
+  }
+  // Lignes d'une date pour la prestation filtrée ; l'ancien format (toutes prestations confondues) n'est
+  // utilisé que si la date n'a pas de chiffres par prestation, pour ne pas compter deux fois.
+  function dayRows(day, prest) {
+    var rows = Object.keys(day || {}).map(function (k) { return day[k]; });
+    var detailed = rows.filter(function (r) { return r[C.prest] !== OLD_PREST; });
+    if (prest) return detailed.filter(function (r) { return r[C.prest] === prest; });
+    return detailed.length ? detailed : rows;
+  }
   function historyRows() {
     var snaps = allSnaps(), rows = [];
     Object.keys(snaps).sort().forEach(function (d) {
-      Object.keys(snaps[d]).sort().forEach(function (n) {
-        var r = snaps[d][n].slice(0, SNAP_HEAD.length);
+      Object.keys(snaps[d]).sort().forEach(function (k) {
+        var r = snaps[d][k].slice(0, SNAP_HEAD.length);
         while (r.length < SNAP_HEAD.length) r.push('');
         rows.push(r);
       });
@@ -608,10 +667,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     var csv = [SNAP_HEAD].concat(rows).map(function (r) {
       return r.map(function (c) { c = String(c); return /[;"\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(';');
     }).join('\r\n');
-    var p = $('prestFilter').value;
     var a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
-    a.download = 'historique_inbox_' + rows[rows.length - 1][0] + (p ? '_' + p.replace(/\W+/g, '-') : '') + '.csv';
+    a.download = 'historique_inbox_' + rows[rows.length - 1][0] + '.csv';
     document.body.appendChild(a); a.click(); a.remove();
     return true;
   }
@@ -626,24 +684,23 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       var fr = new FileReader();
       fr.onload = function (e) {
         var lines = String(e.target.result).replace(/^﻿/, '').split(/\r?\n/).filter(Boolean);
+        var head = (lines[0] || '').split(';').map(function (x) { return norm(x.replace(/^"|"$/g, '')).replace(/ /g, '_'); });
+        var idx = SNAP_HEAD.map(function (h) { return head.indexOf(h); });
+        if (idx[0] < 0 || idx[2] < 0 || idx[3] < 0) { alert('« ' + f.name + ' » n\'est pas un fichier d\'historique reconnu.'); return; }
         lines.slice(1).forEach(function (l) {
           var c = l.split(';').map(function (x) { return x.replace(/^"|"$/g, ''); });
-          if (c.length < 4 || !/^\d{4}-\d{2}-\d{2}$/.test(c[0])) return;
-          (state.snapshots[c[0]] = state.snapshots[c[0]] || {})[c[1]] = c.slice(0, SNAP_HEAD.length).map(function (x, i) { return i < 2 || x === '' || x == null ? x : +x; });
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(c[idx[0]])) return;
+          var r = idx.map(function (j, i) {
+            var v = j < 0 ? '' : c[j];
+            if (i === C.prest) return v || OLD_PREST;
+            return i <= C.resp || v === '' || v == null ? v : +v;
+          });
+          (state.snapshots[r[0]] = state.snapshots[r[0]] || {})[r[C.prest] + '\t' + r[C.resp]] = r;
         });
-        renderHistory();
-        persist();
+        render();
       };
       fr.readAsText(f, 'utf-8');
     });
-  }
-  function allSnaps() {
-    var out = {};
-    Object.keys(state.snapshots).forEach(function (d) { out[d] = Object.assign({}, state.snapshots[d]); });
-    var live = snapshotRows();
-    if (live.length) out[live[0][0]] = {};
-    live.forEach(function (r) { out[r[0]][r[1]] = r; });
-    return out;
   }
   function renderHistory() {
     renderTrend(); renderCompare();
@@ -651,13 +708,14 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     $('histInfo').textContent = days.length ? days.length + ' date' + (days.length > 1 ? 's' : '') + ', du ' + fmt(days[0]) + ' au ' + fmt(days[days.length - 1]) + '.' : 'Aucun historique chargé.';
   }
   function renderTrend() {
-    var snaps = allSnaps(), days = Object.keys(snaps).sort(), box = $('trend');
+    var snaps = allSnaps(), prest = $('prestFilter').value, box = $('trend');
+    var days = Object.keys(snaps).sort().filter(function (d) { return dayRows(snaps[d], prest).length; });
     if (days.length < 2) {
       box.innerHTML = '<div class="empty">' + (days.length ? 'Un seul jour disponible — il faut au moins deux instantanés pour une tendance.' : 'Aucun instantané chargé.') + '</div>';
       return;
     }
     var pts = days.map(function (d) {
-      var t = 0, l = 0; Object.keys(snaps[d]).forEach(function (r) { t += +snaps[d][r][2]; l += +snaps[d][r][3]; });
+      var t = 0, l = 0; dayRows(snaps[d], prest).forEach(function (r) { t += +r[C.total] || 0; l += +r[C.late] || 0; });
       return { d: d, t: t, l: l };
     });
     var W = Math.max(320, box.clientWidth || 800), H = 220, L = 44, R = 70, T = 12, B = 28, maxY = Math.max.apply(null, pts.map(function (p) { return p.t; }).concat([1]));
@@ -698,23 +756,24 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     });
   }
   function renderCompare() {
-    var snaps = allSnaps(), days = Object.keys(snaps).sort(), box = $('compare'), selA = $('cmpA'), selB = $('cmpB');
+    var snaps = allSnaps(), prest = $('prestFilter').value, box = $('compare'), selA = $('cmpA'), selB = $('cmpB');
+    var days = Object.keys(snaps).sort().filter(function (d) { return dayRows(snaps[d], prest).length; });
     if (days.length < 2) {
       selA.innerHTML = selB.innerHTML = '';
-      box.innerHTML = '<div class="empty">Charge au moins un instantané précédent (par ex. celui de la semaine passée) pour comparer.</div>';
+      box.innerHTML = '<div class="empty">Il faut au moins deux dates' + (prest ? ' pour « ' + esc(prest) + ' »' : '') + ' : charge les extractions d\'un autre jour ou importe l\'historique.</div>';
       return;
     }
-    var b = days.indexOf(selB.value) >= 0 ? selB.value : days[days.length - 1];
-    var a = selA.value;
-    if (days.indexOf(a) < 0 || a >= b) { // par défaut : l'instantané le plus proche d'une semaine avant
-      var target = isoDay(new Date(Date.parse(b) - 7 * 86400000));
-      a = days.filter(function (d) { return d <= target; }).pop() || days[0];
-      if (a >= b) a = days[days.indexOf(b) - 1] || days[0];
-    }
+    var cmp = state.cmp || {}; // dates choisies à la main ; sinon : dernière date et la précédente
+    var b = days.indexOf(cmp.b) >= 0 ? cmp.b : days[days.length - 1];
+    var a = cmp.a;
+    if (days.indexOf(a) < 0 || a >= b) a = days[days.indexOf(b) - 1] || days[0];
     var opts = function (cur) { return days.map(function (d) { return '<option value="' + d + '"' + (d === cur ? ' selected' : '') + '>' + fmt(d) + '</option>'; }).join(''); };
     selA.innerHTML = opts(a); selB.innerHTML = opts(b);
-    var A = snaps[a], B = snaps[b], names = Object.keys(A).concat(Object.keys(B)).filter(function (n, i, arr) { return arr.indexOf(n) === i; });
-    var alias = aliasMap(names), metrics = [[2, 'Dossiers'], [3, 'En retard'], [4, '> seuil'], [5, 'Médiane (j)']];
+    var index = function (rows) { var m = {}; rows.forEach(function (r) { m[r[C.prest] + '\t' + r[C.resp]] = r; }); return m; };
+    var A = index(dayRows(snaps[a], prest)), B = index(dayRows(snaps[b], prest));
+    var keys = Object.keys(A).concat(Object.keys(B)).filter(function (k, i, arr) { return arr.indexOf(k) === i; });
+    var alias = aliasMap(keys.map(function (k) { return k.split('\t')[1]; }).filter(function (n, i, arr) { return arr.indexOf(n) === i; }));
+    var metrics = [[C.total, 'Dossiers'], [C.late, 'En retard'], [C.over, '> seuil'], [C.med, 'Médiane (j)']];
     var cell = function (ra, rb, k) {
       var vb = rb ? rb[k] : '', va = ra ? ra[k] : '';
       if (vb === '' || vb == null) return '<td class="muted">–</td>';
@@ -722,17 +781,31 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       var d = +vb - +va;
       return '<td>' + vb + '<span class="delta ' + (d > 0 ? 'up">▲ +' + d : d < 0 ? 'down">▼ ' + d : 'flat">= 0') + '</span></td>';
     };
-    var tot = function (S) { var t = [0, 0, 0, 0, 0, '']; Object.keys(S).forEach(function (n) { for (var k = 2; k <= 4; k++) t[k] += +S[n][k] || 0; }); return t; };
-    var rows = names.map(function (n) { return { n: n, a: A[n], b: B[n] }; })
-      .sort(function (x, y) { return ((y.b ? +y.b[2] : 0) - (y.a ? +y.a[2] : 0)) - ((x.b ? +x.b[2] : 0) - (x.a ? +x.a[2] : 0)); });
-    box.innerHTML = '<div class="scroll"><table><thead><tr><th style="cursor:default">Collaborateur</th>' +
-      metrics.map(function (m) { return '<th style="cursor:default">' + m[1] + '</th>'; }).join('') + '</tr></thead><tbody>' +
-      rows.map(function (r) {
-        return '<tr><td>' + esc(alias[r.n]) + (r.b ? '' : ' <span class="muted">(absent le ' + fmt(b) + ')</span>') + '</td>' +
-          metrics.map(function (m) { return cell(r.a, r.b, m[0]); }).join('') + '</tr>';
-      }).join('') +
-      '<tr class="total"><td>Total équipe</td>' + metrics.map(function (m) { return m[0] === 5 ? '<td></td>' : cell(tot(A), tot(B), m[0]); }).join('') +
-      '</tr></tbody></table></div><p class="note">Comparaison du ' + fmt(a) + ' au ' + fmt(b) + ' (' + Math.round((Date.parse(b) - Date.parse(a)) / 86400000) + ' jours). Tri : plus forte hausse du nombre de dossiers en premier.</p>';
+    var sum = function (S, ks) {
+      var t = [], any = false;
+      ks.forEach(function (k) { if (!S[k]) return; any = true; [C.total, C.late, C.over].forEach(function (c) { t[c] = (t[c] || 0) + (+S[k][c] || 0); }); });
+      return any ? t : null;
+    };
+    var gain = function (k) { return (B[k] ? +B[k][C.total] : 0) - (A[k] ? +A[k][C.total] : 0); };
+    var groups = {};
+    keys.forEach(function (k) { var p = k.split('\t')[0]; (groups[p] = groups[p] || []).push(k); });
+    var prests = Object.keys(groups).sort(), body = '';
+    prests.forEach(function (p) {
+      var ks = groups[p].sort(function (x, y) { return gain(y) - gain(x); });
+      body += '<tr class="group"><td>' + esc(p) + '</td>' + metrics.map(function (m) { return m[0] === C.med ? '<td></td>' : cell(sum(A, ks), sum(B, ks), m[0]); }).join('') + '</tr>';
+      ks.forEach(function (k) {
+        var who = k.split('\t')[1];
+        body += '<tr><td style="padding-left:20px">' + esc(alias[who]) + (B[k] ? '' : ' <span class="muted">(absent le ' + fmt(b) + ')</span>') + '</td>' +
+          metrics.map(function (m) { return cell(A[k], B[k], m[0]); }).join('') + '</tr>';
+      });
+    });
+    if (prests.length > 1) body += '<tr class="total"><td>Total ' + (prest ? '' : 'toutes prestations') + '</td>' +
+      metrics.map(function (m) { return m[0] === C.med ? '<td></td>' : cell(sum(A, keys), sum(B, keys), m[0]); }).join('') + '</tr>';
+    var nDays = Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
+    box.innerHTML = '<div class="scroll"><table><thead><tr><th style="cursor:default">Prestation / collaborateur</th>' +
+      metrics.map(function (m) { return '<th style="cursor:default">' + m[1] + '</th>'; }).join('') + '</tr></thead><tbody>' + body +
+      '</tbody></table></div><p class="note">Du ' + fmt(a) + ' au ' + fmt(b) + ' (' + nDays + ' jour' + (nDays > 1 ? 's' : '') + '). Dans chaque prestation, la plus forte hausse du nombre de dossiers en premier.' +
+      (prests.indexOf(OLD_PREST) >= 0 ? ' « ' + OLD_PREST + ' » : chiffres enregistrés avant la séparation par prestation.' : '') + '</p>';
   }
   function fmt(d) { return d.slice(8) + '.' + d.slice(5, 7) + '.' + d.slice(0, 4); }
   function sign(n) { return (n > 0 ? '+' : '') + n; }
@@ -741,9 +814,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     var names = { retard: 'En retard', statut: "Statut d'utilisateur", inbox: 'Date inbox', type: 'Type de transaction', debut: 'Date de début', resp: 'Personne responsable', id: "ID de l'objet" };
     $('diag').innerHTML = Object.keys(state.files).sort().map(function (n) {
       var f = state.files[n];
-      if (f.error) return '<p><strong>' + esc(n) + '</strong> — <span class="hot">' + esc(f.error) + '</span></p>';
+      if (f.error) return '<p><strong>' + esc(f.name) + '</strong> — <span class="hot">' + esc(f.error) + '</span></p>';
       var missing = Object.keys(names).filter(function (k) { return f.map[k] == null; }).map(function (k) { return names[k]; });
-      return '<p><strong>' + esc(n) + '</strong> — ' + f.items.length + ' lignes lues. ' +
+      return '<p><strong>' + esc(f.name) + '</strong> (' + fmt(f.day) + ') — ' + f.items.length + ' lignes lues. ' +
         (missing.length ? '<span class="hot">Colonnes non trouvées : ' + esc(missing.join(', ')) + '.</span> ' : 'Toutes les colonnes attendues sont reconnues. ') +
         'Valeurs de « En retard » : ' + Object.keys(f.lateValues).map(function (v) { return '« ' + esc(v) + ' » ×' + f.lateValues[v] + (isLate(v === '(vide)' ? '' : v) ? ' (compté en retard)' : ''); }).join(', ') + '.</p>';
     }).join('');
@@ -769,12 +842,13 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   ['dragenter', 'dragover'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('over'); }); });
   ['dragleave', 'drop'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('over'); }); });
   drop.addEventListener('drop', function (e) { readFiles(e.dataTransfer.files); });
-  ['refDate', 'threshold', 'prestFilter', 'pseudo', 'oldN', 'oldWho', 'showId'].forEach(function (id) { $(id).addEventListener('change', render); });
+  ['threshold', 'prestFilter', 'pseudo', 'oldN', 'oldWho', 'showId'].forEach(function (id) { $(id).addEventListener('change', render); });
+  $('viewDay').addEventListener('change', function () { state.viewDay = this.value; render(); });
   $('exportBtn').onclick = exportHistory;
   $('endBtn').onclick = endSession;
   $('loadSnapBtn').onclick = function () { $('snapInput').click(); };
   $('snapInput').onchange = function () { readSnapshots(this.files); this.value = ''; };
-  ['cmpA', 'cmpB'].forEach(function (id) { $(id).addEventListener('change', renderCompare); });
+  ['cmpA', 'cmpB'].forEach(function (id) { $(id).addEventListener('change', function () { state.cmp = { a: $('cmpA').value, b: $('cmpB').value }; renderCompare(); }); });
   $('printBtn').onclick = function () { window.print(); };
   $('remember').addEventListener('change', render);
   $('clearBtn').onclick = clearStored;
