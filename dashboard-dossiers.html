@@ -147,6 +147,7 @@ code { font-size: 12px; }
     </details>
     <div class="session">
       <div><strong>Historique</strong> <span class="muted" id="histInfo">Aucun historique chargé.</span></div>
+      <div id="importMsg" class="hidden" role="status" style="margin-top:6px;font-size:13px"></div>
       <div class="row" style="margin-top:8px">
         <button id="loadSnapBtn">Importer l'historique (.csv)</button>
         <input type="file" id="snapInput" accept=".csv" multiple hidden>
@@ -376,6 +377,10 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     Array.prototype.forEach.call(list, function (f) {
       var fr = new FileReader();
       fr.onload = function (e) {
+        if (/\.csv$/i.test(f.name)) {
+          var text = decodeText(e.target.result);
+          if (isHistoryText(text)) { importHistoryText(text, f.name); render(); return; }
+        }
         try {
           var wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array', cellDates: true, dense: false });
           addFile(parseWorkbook(f.name, wb), dateFromName(f.name) || isoDay(f.lastModified ? new Date(f.lastModified) : new Date()));
@@ -850,44 +855,74 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     if (!exportHistory()) return;
     wipe();
   }
+  function decodeText(buf) { // UTF-8, sinon Windows-1252 (fichier réenregistré par Excel)
+    var t = new TextDecoder('utf-8').decode(buf);
+    if (t.indexOf('\ufffd') >= 0) { try { t = new TextDecoder('windows-1252').decode(buf); } catch (e) {} }
+    return t.replace(/^\ufeff/, '');
+  }
+  function isHistoryText(t) {
+    var first = (t.split(/\r?\n/).filter(function (l) { return l.replace(/[;,\t]/g, '').trim(); })[0] || '');
+    var h = norm(first.split(/[;,\t]/)[0]);
+    return h === 'date' || h === 'type' || h === 'mesure';
+  }
+  function anyDay(v) { var d = toDate(v); return d ? isoDay(d) : ''; }
+  function anyNum(v) {
+    if (v == null) return '';
+    v = String(v).replace(/[\s'’]/g, '').replace(',', '.');
+    return v === '' || isNaN(+v) ? '' : +v;
+  }
+  function importHistoryText(text, name) {
+    var lines = text.split(/\r?\n/).filter(function (l) { return l.replace(/[;,\t"]/g, '').trim(); });
+    var first = lines[0] || '', sep = [';', '\t', ','].sort(function (a, b) { return first.split(b).length - first.split(a).length; })[0];
+    var cells = function (l) { return l.split(sep).map(function (x) { return x.trim().replace(/^"|"$/g, ''); }); };
+    var keyOf = function (x) { return norm(x).replace(/ /g, '_'); };
+    var idx = null, oidx = null, midx = null, nRows = 0, nObj = 0, days = {};
+    lines.forEach(function (l) {
+      var c = cells(l), h = c.map(keyOf);
+      if (h[0] === 'date') { idx = SNAP_HEAD.map(function (x) { return h.indexOf(x); }); oidx = midx = null; if (idx[2] < 0 || idx[3] < 0) idx = null; return; }
+      if (h[0] === 'type') { oidx = OBJ_HEAD.map(function (x) { return h.indexOf(x); }); idx = midx = null; return; }
+      if (h[0] === 'mesure') { midx = MEAS_HEAD.map(function (x) { return h.indexOf(x); }); idx = oidx = null; return; }
+      if (midx) {
+        var mk = c[midx[1]] + '\t' + c[midx[2]], mo = state.objectives[mk], md = anyDay(c[midx[3]]), mv = anyNum(c[midx[4]]);
+        if (!mo || !md || mv === '' || anyDay(c[midx[5]]) !== (mo.cutoff || '')) return;
+        (mo.meas = mo.meas || {})[md] = mv;
+        return;
+      }
+      if (oidx) {
+        if (norm(c[oidx[0]]) !== 'objectif') return;
+        var o = { due: anyDay(c[oidx[3]]), set: anyDay(c[oidx[8]]), cutoff: oidx[9] >= 0 ? anyDay(c[oidx[9]]) : '' };
+        ['over', 'late', 'med', 'max', 'liq'].forEach(function (m, i) { var j = oidx[i < 4 ? 4 + i : 10]; o[m] = j >= 0 ? anyNum(c[j]) : ''; });
+        state.objectives[c[oidx[1]] + '\t' + c[oidx[2]]] = o; nObj++;
+        return;
+      }
+      if (!idx) return;
+      var day = anyDay(c[idx[0]]); if (!day || !c[idx[2]]) return;
+      var r = idx.map(function (j, i) {
+        var v = j < 0 ? '' : c[j];
+        if (i === C.date) return day;
+        if (i === C.prest) return v || OLD_PREST;
+        if (i === C.resp) return v;
+        return anyNum(v);
+      });
+      (state.snapshots[day] = state.snapshots[day] || {})[r[C.prest] + '\t' + r[C.resp]] = r;
+      days[day] = 1; nRows++;
+    });
+    var d = Object.keys(days).sort(), msg = $('importMsg');
+    msg.classList.remove('hidden');
+    if (!nRows && !nObj) {
+      msg.innerHTML = '<span class="st miss"><i aria-hidden="true">✕</i>Rien d\'importé</span> « ' + esc(name) + ' » : aucune ligne reconnue. Première ligne lue : <code>' + esc(first.slice(0, 120)) + '</code>';
+    } else {
+      msg.innerHTML = '<span class="st ok"><i aria-hidden="true">✓</i>Importé</span> « ' + esc(name) + ' » : ' + nRows + ' ligne' + (nRows > 1 ? 's' : '') +
+        (d.length ? ', ' + d.length + ' date' + (d.length > 1 ? 's' : '') + ' (du ' + fmt(d[0]) + ' au ' + fmt(d[d.length - 1]) + ')' : '') +
+        (nObj ? ', ' + nObj + ' objectif' + (nObj > 1 ? 's' : '') : '') + '.' +
+        (fileDays().length ? '' : ' <strong>Dépose maintenant les extractions Excel du jour</strong> pour voir la comparaison.');
+    }
+  }
   function readSnapshots(list) {
     Array.prototype.forEach.call(list, function (f) {
       var fr = new FileReader();
-      fr.onload = function (e) {
-        var lines = String(e.target.result).replace(/^\ufeff/, '').split(/\r?\n/).filter(function (l) { return l.replace(/;/g, '').trim(); });
-        var cells = function (l) { return l.split(';').map(function (x) { return x.replace(/^"|"$/g, ''); }); };
-        var keyOf = function (x) { return norm(x).replace(/ /g, '_'); };
-        var idx = null, oidx = null, midx = null, known = false;
-        lines.forEach(function (l) {
-          var c = cells(l), h = c.map(keyOf);
-          if (h[0] === 'date') { idx = SNAP_HEAD.map(function (x) { return h.indexOf(x); }); oidx = midx = null; known = idx[2] >= 0 && idx[3] >= 0; return; }
-          if (h[0] === 'type') { oidx = OBJ_HEAD.map(function (x) { return h.indexOf(x); }); idx = midx = null; known = true; return; }
-          if (h[0] === 'mesure') { midx = MEAS_HEAD.map(function (x) { return h.indexOf(x); }); idx = oidx = null; return; }
-          if (midx) {
-            var mk = c[midx[1]] + '\t' + c[midx[2]], mo = state.objectives[mk];
-            if (!mo || c[midx[4]] === '' || (c[midx[5]] || '') !== (mo.cutoff || '')) return;
-            (mo.meas = mo.meas || {})[c[midx[3]]] = +c[midx[4]];
-            return;
-          }
-          if (oidx) {
-            if (c[oidx[0]] !== 'objectif') return;
-            var o = { due: c[oidx[3]] || '', set: c[oidx[8]] || '', cutoff: oidx[9] >= 0 ? c[oidx[9]] || '' : '' };
-            ['over', 'late', 'med', 'max', 'liq'].forEach(function (m, i) { var j = oidx[i < 4 ? 4 + i : 10], v = j >= 0 ? c[j] : ''; o[m] = v === '' || v == null ? '' : +v; });
-            state.objectives[c[oidx[1]] + '\t' + c[oidx[2]]] = o;
-            return;
-          }
-          if (!idx || !/^\d{4}-\d{2}-\d{2}$/.test(c[idx[0]])) return;
-          var r = idx.map(function (j, i) {
-            var v = j < 0 ? '' : c[j];
-            if (i === C.prest) return v || OLD_PREST;
-            return i <= C.resp || v === '' || v == null ? v : +v;
-          });
-          (state.snapshots[r[0]] = state.snapshots[r[0]] || {})[r[C.prest] + '\t' + r[C.resp]] = r;
-        });
-        if (!known) alert('« ' + f.name + ' » n\'est pas un fichier d\'historique reconnu.');
-        render();
-      };
-      fr.readAsText(f, 'utf-8');
+      fr.onload = function (e) { importHistoryText(decodeText(e.target.result), f.name); render(); };
+      fr.readAsArrayBuffer(f);
     });
   }
   function renderHistory() {
