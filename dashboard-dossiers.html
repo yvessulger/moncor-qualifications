@@ -94,6 +94,17 @@ td.bar { width: 34%; min-width: 180px; }
 .hot { color: var(--critical); font-weight: 600; }
 .up { color: var(--critical); }
 .down { color: var(--good-text); }
+.st { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.st i { font-style: normal; display: inline-block; width: 16px; height: 16px; line-height: 16px; text-align: center; border-radius: 4px; color: #fff; font-size: 11px; }
+.st.ok i { background: var(--good); } .st.ok { color: var(--good-text); }
+.st.track i { background: var(--accent); } .st.track { color: var(--accent); }
+.st.risk i { background: var(--warning); color: #0b0b0b; } .st.risk { color: var(--ink); }
+.st.miss i { background: var(--critical); } .st.miss { color: var(--critical); }
+.st.na i { background: var(--axis); color: var(--ink); } .st.na { color: var(--muted); font-weight: 400; }
+.goal { color: var(--muted); font-size: 12px; }
+#objTable input[type=number] { width: 58px; }
+#objTable td, #objTable th { vertical-align: middle; }
+tr.defaults td { background: var(--wash); }
 .flat { color: var(--muted); }
 .delta { font-size: 12px; margin-left: 6px; }
 .muted { color: var(--muted); }
@@ -162,6 +173,16 @@ code { font-size: 12px; }
       <div class="legend" id="ageLegend"></div>
       <div class="scroll"><table id="collabTable"></table></div>
       <p class="note">Ancienneté = jours entre la « Date inbox » et la date d'extraction du fichier. « Plus ancien » = date inbox du dossier le plus ancien (en rouge au-delà du seuil). « En retard » reprend l'indicateur du système.</p>
+    </section>
+
+    <section class="card">
+      <div class="row" style="justify-content:space-between;margin-bottom:8px">
+        <h2 style="margin:0">Objectifs par collaborateur et par prestation</h2>
+        <button class="noprint" id="objEdit">Fixer / modifier les objectifs</button>
+      </div>
+      <div class="legend" id="objLegend"></div>
+      <div class="scroll"><table id="objTable"></table></div>
+      <p class="note">Chaque cellule : valeur actuelle / cible maximale. Statut calculé sur la dernière mesure et sur la tendance depuis la fixation de l'objectif (ou la mesure précédente). Les objectifs sont enregistrés dans le fichier d'historique.</p>
     </section>
 
     <section class="card">
@@ -260,7 +281,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     { max: Infinity, label: '> 30 j', v: '--b4' }
   ];
 
-  var state = { files: {}, snapshots: {}, viewDay: '', sort: { key: 'total', asc: false } };
+  var state = { files: {}, snapshots: {}, objectives: {}, viewDay: '', sort: { key: 'total', asc: false } };
+  var OBJ_HEAD = ['type', 'prestation', 'collaborateur', 'echeance', 'max_au_dela_seuil', 'max_en_retard', 'max_mediane_jours', 'max_age_plus_ancien', 'fixe_le'];
   var OLD_PREST = '(ancien format)';
   var $ = function (id) { return document.getElementById(id); };
 
@@ -444,8 +466,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         files[k] = { name: f.name, day: f.day, prest: f.prest, map: f.map, lateValues: f.lateValues, savedAt: f.savedAt,
           items: f.items.map(function (it) { return [it.resp, it.statut, it.type, it.inbox ? isoDay(it.inbox) : '', it.late ? 1 : 0, it.id]; }) };
       });
-      if (!Object.keys(files).length && !Object.keys(state.snapshots).length) { st.removeItem(STORE_KEY); $('storeInfo').textContent = ''; return; }
-      st.setItem(STORE_KEY, JSON.stringify({ v: 2, viewDay: state.viewDay, threshold: $('threshold').value, files: files, snapshots: state.snapshots }));
+      if (!Object.keys(files).length && !Object.keys(state.snapshots).length && !Object.keys(state.objectives).length) { st.removeItem(STORE_KEY); $('storeInfo').textContent = ''; return; }
+      st.setItem(STORE_KEY, JSON.stringify({ v: 2, viewDay: state.viewDay, threshold: $('threshold').value, files: files, snapshots: state.snapshots, objectives: state.objectives }));
       var times = Object.keys(files).map(function (k) { return files[k].savedAt; });
       $('storeInfo').textContent = times.length ? 'Données mémorisées depuis le ' + dmy(new Date(Math.min.apply(null, times))) +
         ' · effacement automatique le ' + dmy(new Date(Math.min.apply(null, times) + RETENTION_DAYS * 86400000)) + '.' : '';
@@ -466,6 +488,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         });
       });
       state.snapshots = snaps;
+      state.objectives = d.objectives || {};
       Object.keys(d.files || {}).forEach(function (k) {
         var f = d.files[k]; if (!(f.savedAt > limit)) return; // détail des dossiers : 30 jours au plus
         var day = f.day || d.refDate || isoDay(new Date(f.savedAt)), name = f.name || k;
@@ -482,7 +505,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   }
   function wipe() {
     var st = storage(); try { if (st) st.removeItem(STORE_KEY); } catch (e) {}
-    state.files = {}; state.snapshots = {}; state.viewDay = ''; state.cmp = null;
+    state.files = {}; state.snapshots = {}; state.objectives = {}; state.viewDay = ''; state.cmp = null; state.objEdit = false;
     render();
   }
 
@@ -495,6 +518,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     var tot = summarize(items, ref, thr);
     renderTiles(tot, thr);
     renderCollab(items, ref, thr, tot);
+    renderObjectives();
     renderOldest(items, ref, thr);
     renderCross(items, 'statut', $('statusTable'), 'Statut');
     renderCross(items, 'type', $('typeTable'), 'Type de transaction');
@@ -588,6 +612,93 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     }).join('') + '</div>';
   }
 
+  // ---- Objectifs : cible maximale par indicateur, échéance libre ----
+  var METRICS = [
+    { k: 'over', c: 5, label: '> seuil', unit: '' },
+    { k: 'late', c: 4, label: 'En retard', unit: '' },
+    { k: 'med', c: 6, label: 'Médiane', unit: ' j' },
+    { k: 'max', c: 11, label: 'Plus ancien', unit: ' j' }
+  ];
+  var STATUS = {
+    ok: ['ok', '✓', 'Atteint'], track: ['track', '↘', 'En bonne voie'], risk: ['risk', '!', 'À risque'],
+    miss: ['miss', '✕', 'Échéance dépassée'], na: ['na', '·', 'À suivre']
+  };
+  var RANK = { ok: 0, track: 1, na: 2, risk: 3, miss: 4 };
+  function badge(st) { var s = STATUS[st]; return '<span class="st ' + s[0] + '"><i aria-hidden="true">' + s[1] + '</i>' + s[2] + '</span>'; }
+  function seriesFor(snaps, key) {
+    return Object.keys(snaps).sort().filter(function (d) { return snaps[d][key]; }).map(function (d) { return snaps[d][key]; });
+  }
+  function metricStatus(series, m, o) {
+    var target = o[m.k]; if (target === '' || target == null) return null;
+    var cur = series[series.length - 1], v = cur ? cur[m.c] : '';
+    if (v === '' || v == null) return { st: 'na', v: '–' };
+    v = +v;
+    if (v <= target) return { st: 'ok', v: v };
+    if (o.due && o.due < isoDay(new Date())) return { st: 'miss', v: v };
+    // tendance : depuis la fixation de l'objectif, sinon depuis la mesure précédente
+    var usable = function (r) { return r[0] < cur[0] && r[m.c] !== '' && r[m.c] != null; };
+    var base = series.filter(function (r) { return o.set && r[0] >= o.set && usable(r); })[0] || series.filter(usable).pop();
+    if (!base || !o.due) return { st: 'na', v: v };
+    var days = (Date.parse(cur[0]) - Date.parse(base[0])) / 86400000, slope = (v - +base[m.c]) / days;
+    var projected = v + slope * Math.max(0, (Date.parse(o.due) - Date.parse(cur[0])) / 86400000);
+    return { st: projected <= target ? 'track' : 'risk', v: v };
+  }
+  function renderObjectives() {
+    var snaps = allSnaps(), prest = $('prestFilter').value, edit = !!state.objEdit, keys = {};
+    dayRows(snaps[state.viewDay], prest).forEach(function (r) { if (r[C.prest] !== OLD_PREST) keys[r[C.prest] + '\t' + r[C.resp]] = 1; });
+    Object.keys(state.objectives).forEach(function (k) { if (!prest || k.split('\t')[0] === prest) keys[k] = 1; });
+    keys = Object.keys(keys).sort();
+    var alias = aliasMap(keys.map(function (k) { return k.split('\t')[1]; }).filter(function (n, i, a) { return a.indexOf(n) === i; }));
+    $('objEdit').textContent = edit ? 'Terminer la saisie' : 'Fixer / modifier les objectifs';
+    $('objLegend').innerHTML = edit ? '<span>Laisse une case vide si tu ne fixes pas de cible sur cet indicateur.</span>' : ['ok', 'track', 'risk', 'miss', 'na'].map(function (k) { return badge(k); }).join('');
+    var t = $('objTable');
+    if (!keys.length) { t.innerHTML = '<tr><td class="empty">Charge des extractions pour fixer des objectifs.</td></tr>'; return; }
+    var th = function (x, left) { return '<th style="cursor:default' + (left ? ';text-align:left' : '') + '">' + x + '</th>'; };
+    var head = '<thead><tr>' + th('Prestation / collaborateur', 1) + th('Échéance') + METRICS.map(function (m) { return th(m.label + (m.unit ? ' (j)' : '')); }).join('') + (edit ? '' : th('Statut', 1)) + '</tr></thead>';
+    var body = '', lastP = null;
+    if (edit) body += '<tr class="defaults"><td>Appliquer aux lignes vides</td><td><input type="date" data-def="due"></td>' +
+      METRICS.map(function (m) { return '<td><input type="number" min="0" data-def="' + m.k + '"></td>'; }).join('') + '</tr>';
+    keys.forEach(function (k) {
+      var p = k.split('\t'), o = state.objectives[k] || {}, series = seriesFor(snaps, k);
+      if (p[0] !== lastP) { body += '<tr class="group"><td colspan="' + (edit ? 6 : 7) + '">' + esc(p[0]) + '</td></tr>'; lastP = p[0]; }
+      body += '<tr data-k="' + esc(k) + '"><td style="padding-left:20px">' + esc(alias[p[1]]) + '</td>';
+      if (edit) {
+        body += '<td><input type="date" data-m="due" value="' + (o.due || '') + '"></td>' + METRICS.map(function (m) {
+          return '<td><input type="number" min="0" data-m="' + m.k + '" value="' + (o[m.k] === '' || o[m.k] == null ? '' : o[m.k]) + '"></td>';
+        }).join('') + '</tr>';
+        return;
+      }
+      var worst = null, cellsHtml = METRICS.map(function (m) {
+        var r = metricStatus(series, m, o), cur = series.length ? series[series.length - 1][m.c] : '';
+        if (!r) return '<td>' + (cur === '' || cur == null ? '–' : cur + m.unit) + ' <span class="goal">/ –</span></td>';
+        if (worst === null || RANK[r.st] > RANK[worst]) worst = r.st;
+        return '<td><span class="' + (r.st === 'ok' ? 'down' : r.st === 'miss' || r.st === 'risk' ? 'hot' : '') + '">' + r.v + (r.v === '–' ? '' : m.unit) + '</span> <span class="goal">/ ' + o[m.k] + m.unit + '</span></td>';
+      }).join('');
+      body += '<td>' + (o.due ? fmt(o.due) : '<span class="muted">–</span>') + '</td>' + cellsHtml +
+        '<td style="text-align:left">' + (worst === null ? '<span class="muted">Pas d\'objectif</span>' : badge(worst)) + '</td></tr>';
+    });
+    t.innerHTML = head + '<tbody>' + body + '</tbody>';
+    if (!edit) return;
+    t.querySelectorAll('input[data-m]').forEach(function (inp) {
+      inp.addEventListener('change', function () {
+        var k = inp.closest('tr').getAttribute('data-k'), m = inp.getAttribute('data-m');
+        var o = state.objectives[k] = state.objectives[k] || { set: isoDay(new Date()) };
+        o[m] = m === 'due' ? inp.value : (inp.value === '' ? '' : Math.max(0, +inp.value));
+        var empty = !o.due && METRICS.every(function (x) { return o[x.k] === '' || o[x.k] == null; });
+        if (empty) delete state.objectives[k];
+        persist();
+      });
+    });
+    t.querySelectorAll('input[data-def]').forEach(function (inp) {
+      inp.addEventListener('change', function () {
+        var m = inp.getAttribute('data-def');
+        t.querySelectorAll('input[data-m="' + m + '"]').forEach(function (x) {
+          if (x.value === '' && inp.value !== '') { x.value = inp.value; x.dispatchEvent(new Event('change')); }
+        });
+      });
+    });
+  }
+
   function renderOldest(items, ref, thr) {
     var alias = aliasMap(Object.keys(groupBy(items, 'resp'))), sel = $('oldWho'), who = sel.value;
     var people = Object.keys(alias).sort(function (a, b) { return alias[a].localeCompare(alias[b]); });
@@ -621,8 +732,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   }
 
   // ---- Instantanés agrégés (aucune donnée d'assuré) : une ligne par date × prestation × collaborateur ----
-  var SNAP_HEAD = ['date', 'prestation', 'collaborateur', 'dossiers', 'en_retard', 'au_dela_seuil', 'mediane_jours', 'age_0_7', 'age_8_14', 'age_15_30', 'age_31_plus'];
-  var C = { date: 0, prest: 1, resp: 2, total: 3, late: 4, over: 5, med: 6 };
+  var SNAP_HEAD = ['date', 'prestation', 'collaborateur', 'dossiers', 'en_retard', 'au_dela_seuil', 'mediane_jours', 'age_0_7', 'age_8_14', 'age_15_30', 'age_31_plus', 'age_max_jours'];
+  var C = { date: 0, prest: 1, resp: 2, total: 3, late: 4, over: 5, med: 6, max: 11 };
   function liveRows() {
     var thr = +$('threshold').value || 30, g = {}, out = [];
     Object.keys(state.files).forEach(function (k) {
@@ -631,7 +742,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     });
     Object.keys(g).sort().forEach(function (key) {
       var p = key.split('\t'), s = summarize(g[key], toDate(p[0]), thr);
-      out.push([p[0], p[1], p[2], s.total, s.late, s.over, s.med == null ? '' : s.med].concat(s.buckets));
+      out.push([p[0], p[1], p[2], s.total, s.late, s.over, s.med == null ? '' : s.med].concat(s.buckets, [s.max == null ? '' : s.max]));
     });
     return out;
   }
@@ -663,18 +774,22 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   }
   function exportHistory() {
     var rows = historyRows();
-    if (!rows.length) { alert('Rien à télécharger : charge d\'abord les extractions Excel ou un historique.'); return false; }
-    var csv = [SNAP_HEAD].concat(rows).map(function (r) {
-      return r.map(function (c) { c = String(c); return /[;"\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(';');
-    }).join('\r\n');
+    if (!rows.length && !Object.keys(state.objectives).length) { alert('Rien à télécharger : charge d\'abord les extractions Excel ou un historique.'); return false; }
+    var line = function (r) { return r.map(function (c) { c = String(c == null ? '' : c); return /[;"\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(';'); };
+    var csv = [SNAP_HEAD].concat(rows).map(line).join('\r\n');
+    var objs = Object.keys(state.objectives).sort();
+    if (objs.length) csv += '\r\n\r\n' + [OBJ_HEAD].concat(objs.map(function (k) {
+      var o = state.objectives[k], p = k.split('\t');
+      return ['objectif', p[0], p[1], o.due || '', o.over, o.late, o.med, o.max, o.set || ''];
+    })).map(line).join('\r\n');
     var a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
-    a.download = 'historique_inbox_' + rows[rows.length - 1][0] + '.csv';
+    a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = 'historique_inbox_' + (rows.length ? rows[rows.length - 1][0] : isoDay(new Date())) + '.csv';
     document.body.appendChild(a); a.click(); a.remove();
     return true;
   }
   function endSession() {
-    if (!historyRows().length) { alert('Rien à télécharger ni à effacer.'); return; }
+    if (!historyRows().length && !Object.keys(state.objectives).length) { alert('Rien à télécharger ni à effacer.'); return; }
     if (!confirm('Télécharger l\'historique puis effacer toutes les données de ce poste ?\n\nConserve le fichier téléchargé : tu l\'importeras la prochaine fois.')) return;
     if (!exportHistory()) return;
     wipe();
@@ -683,13 +798,22 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     Array.prototype.forEach.call(list, function (f) {
       var fr = new FileReader();
       fr.onload = function (e) {
-        var lines = String(e.target.result).replace(/^﻿/, '').split(/\r?\n/).filter(Boolean);
-        var head = (lines[0] || '').split(';').map(function (x) { return norm(x.replace(/^"|"$/g, '')).replace(/ /g, '_'); });
-        var idx = SNAP_HEAD.map(function (h) { return head.indexOf(h); });
-        if (idx[0] < 0 || idx[2] < 0 || idx[3] < 0) { alert('« ' + f.name + ' » n\'est pas un fichier d\'historique reconnu.'); return; }
-        lines.slice(1).forEach(function (l) {
-          var c = l.split(';').map(function (x) { return x.replace(/^"|"$/g, ''); });
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(c[idx[0]])) return;
+        var lines = String(e.target.result).replace(/^\ufeff/, '').split(/\r?\n/).filter(function (l) { return l.replace(/;/g, '').trim(); });
+        var cells = function (l) { return l.split(';').map(function (x) { return x.replace(/^"|"$/g, ''); }); };
+        var keyOf = function (x) { return norm(x).replace(/ /g, '_'); };
+        var idx = null, oidx = null, known = false;
+        lines.forEach(function (l) {
+          var c = cells(l), h = c.map(keyOf);
+          if (h[0] === 'date') { idx = SNAP_HEAD.map(function (x) { return h.indexOf(x); }); oidx = null; known = idx[2] >= 0 && idx[3] >= 0; return; }
+          if (h[0] === 'type') { oidx = OBJ_HEAD.map(function (x) { return h.indexOf(x); }); idx = null; known = true; return; }
+          if (oidx) {
+            if (c[oidx[0]] !== 'objectif') return;
+            var o = { due: c[oidx[3]] || '', set: c[oidx[8]] || '' };
+            ['over', 'late', 'med', 'max'].forEach(function (m, i) { var v = c[oidx[4 + i]]; o[m] = v === '' || v == null ? '' : +v; });
+            state.objectives[c[oidx[1]] + '\t' + c[oidx[2]]] = o;
+            return;
+          }
+          if (!idx || !/^\d{4}-\d{2}-\d{2}$/.test(c[idx[0]])) return;
           var r = idx.map(function (j, i) {
             var v = j < 0 ? '' : c[j];
             if (i === C.prest) return v || OLD_PREST;
@@ -697,6 +821,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
           });
           (state.snapshots[r[0]] = state.snapshots[r[0]] || {})[r[C.prest] + '\t' + r[C.resp]] = r;
         });
+        if (!known) alert('« ' + f.name + ' » n\'est pas un fichier d\'historique reconnu.');
         render();
       };
       fr.readAsText(f, 'utf-8');
@@ -770,7 +895,20 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     var opts = function (cur) { return days.map(function (d) { return '<option value="' + d + '"' + (d === cur ? ' selected' : '') + '>' + fmt(d) + '</option>'; }).join(''); };
     selA.innerHTML = opts(a); selB.innerHTML = opts(b);
     var index = function (rows) { var m = {}; rows.forEach(function (r) { m[r[C.prest] + '\t' + r[C.resp]] = r; }); return m; };
-    var A = index(dayRows(snaps[a], prest)), B = index(dayRows(snaps[b], prest));
+    var rowsA = dayRows(snaps[a], prest), rowsB = dayRows(snaps[b], prest);
+    var isOld = function (rows) { return rows.length && rows.every(function (r) { return r[C.prest] === OLD_PREST; }); };
+    if (!prest && isOld(rowsA) !== isOld(rowsB)) { // une date sans prestations : comparaison par collaborateur, prestations additionnées
+      var merge = function (rows) {
+        var m = {};
+        rows.forEach(function (r) {
+          var t = m[r[C.resp]] = m[r[C.resp]] || [r[0], OLD_PREST, r[C.resp], 0, 0, 0, ''];
+          [C.total, C.late, C.over].forEach(function (c) { t[c] += +r[c] || 0; });
+        });
+        return Object.keys(m).map(function (k) { return m[k]; });
+      };
+      rowsA = merge(rowsA); rowsB = merge(rowsB);
+    }
+    var A = index(rowsA), B = index(rowsB);
     var keys = Object.keys(A).concat(Object.keys(B)).filter(function (k, i, arr) { return arr.indexOf(k) === i; });
     var alias = aliasMap(keys.map(function (k) { return k.split('\t')[1]; }).filter(function (n, i, arr) { return arr.indexOf(n) === i; }));
     var metrics = [[C.total, 'Dossiers'], [C.late, 'En retard'], [C.over, '> seuil'], [C.med, 'Médiane (j)']];
@@ -805,7 +943,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     box.innerHTML = '<div class="scroll"><table><thead><tr><th style="cursor:default">Prestation / collaborateur</th>' +
       metrics.map(function (m) { return '<th style="cursor:default">' + m[1] + '</th>'; }).join('') + '</tr></thead><tbody>' + body +
       '</tbody></table></div><p class="note">Du ' + fmt(a) + ' au ' + fmt(b) + ' (' + nDays + ' jour' + (nDays > 1 ? 's' : '') + '). Dans chaque prestation, la plus forte hausse du nombre de dossiers en premier.' +
-      (prests.indexOf(OLD_PREST) >= 0 ? ' « ' + OLD_PREST + ' » : chiffres enregistrés avant la séparation par prestation.' : '') + '</p>';
+      (prests.indexOf(OLD_PREST) >= 0 ? ' « ' + OLD_PREST + ' » : une des dates a été enregistrée avant la séparation par prestation ; comparaison par collaborateur, toutes prestations additionnées (vérifie que les mêmes prestations ont été chargées aux deux dates).' : '') + '</p>';
   }
   function fmt(d) { return d.slice(8) + '.' + d.slice(5, 7) + '.' + d.slice(0, 4); }
   function sign(n) { return (n > 0 ? '+' : '') + n; }
@@ -852,6 +990,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   $('printBtn').onclick = function () { window.print(); };
   $('remember').addEventListener('change', render);
   $('clearBtn').onclick = clearStored;
+  $('objEdit').onclick = function () { state.objEdit = !state.objEdit; render(); };
   var rz; window.addEventListener('resize', function () { clearTimeout(rz); rz = setTimeout(renderTrend, 150); });
   restore();
   render();
