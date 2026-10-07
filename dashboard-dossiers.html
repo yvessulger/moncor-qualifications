@@ -190,8 +190,10 @@ code { font-size: 12px; }
       <div class="row noprint" style="margin-bottom:12px">
         <label>Afficher <select id="oldN"><option>10</option><option selected>20</option><option>50</option></select></label>
         <label>Collaborateur <select id="oldWho"><option value="">Tous</option></select></label>
+        <label><input type="checkbox" id="onlyLiq"> Seulement les dossiers à liquider (objectif « Début ≤ »)</label>
         <label><input type="checkbox" id="showId"> Afficher l'ID de l'objet</label>
       </div>
+      <p class="note" id="oldCount" style="margin-top:0"></p>
       <div class="scroll"><table id="oldTable"></table></div>
       <p class="note">L'ID de l'objet est masqué par défaut : affiche-le seulement pour retrouver le dossier dans le système, pas en projection.</p>
     </section>
@@ -282,7 +284,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   ];
 
   var state = { files: {}, snapshots: {}, objectives: {}, viewDay: '', sort: { key: 'total', asc: false } };
-  var OBJ_HEAD = ['type', 'prestation', 'collaborateur', 'echeance', 'max_au_dela_seuil', 'max_en_retard', 'max_mediane_jours', 'max_age_plus_ancien', 'fixe_le'];
+  var OBJ_HEAD = ['type', 'prestation', 'collaborateur', 'echeance', 'max_au_dela_seuil', 'max_en_retard', 'max_mediane_jours', 'max_age_plus_ancien', 'fixe_le', 'debut_jusqu_au', 'max_a_liquider'];
+  var MEAS_HEAD = ['mesure', 'prestation', 'collaborateur', 'date', 'a_liquider', 'debut_jusqu_au'];
   var OLD_PREST = '(ancien format)';
   var $ = function (id) { return document.getElementById(id); };
 
@@ -350,6 +353,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         statut: get('statut') ? String(get('statut')).trim() : '(sans statut)',
         type: get('type') ? String(get('type')).trim() : '(non précisé)',
         inbox: inbox,
+        debut: toDate(get('debut')),
         late: isLate(rv),
         id: get('id') != null ? String(get('id')) : ''
       });
@@ -413,7 +417,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     Object.keys(state.files).forEach(function (n) {
       var f = state.files[n]; if (!f.items) return;
       if (f.day !== state.viewDay || (p && f.prest !== p)) return;
-      f.items.forEach(function (it) { out.push(it); });
+      f.items.forEach(function (it) { it.prest = f.prest; out.push(it); });
     });
     return out;
   }
@@ -464,7 +468,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         var f = state.files[k]; if (!f.items) return;
         f.savedAt = f.savedAt || Date.now();
         files[k] = { name: f.name, day: f.day, prest: f.prest, map: f.map, lateValues: f.lateValues, savedAt: f.savedAt,
-          items: f.items.map(function (it) { return [it.resp, it.statut, it.type, it.inbox ? isoDay(it.inbox) : '', it.late ? 1 : 0, it.id]; }) };
+          items: f.items.map(function (it) { return [it.resp, it.statut, it.type, it.inbox ? isoDay(it.inbox) : '', it.late ? 1 : 0, it.id, it.debut ? isoDay(it.debut) : '']; }) };
       });
       if (!Object.keys(files).length && !Object.keys(state.snapshots).length && !Object.keys(state.objectives).length) { st.removeItem(STORE_KEY); $('storeInfo').textContent = ''; return; }
       st.setItem(STORE_KEY, JSON.stringify({ v: 2, viewDay: state.viewDay, threshold: $('threshold').value, files: files, snapshots: state.snapshots, objectives: state.objectives }));
@@ -493,7 +497,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         var f = d.files[k]; if (!(f.savedAt > limit)) return; // détail des dossiers : 30 jours au plus
         var day = f.day || d.refDate || isoDay(new Date(f.savedAt)), name = f.name || k;
         state.files[day + '|' + name] = { name: name, key: day + '|' + name, day: day, prest: f.prest, map: f.map, lateValues: f.lateValues, savedAt: f.savedAt,
-          items: f.items.map(function (a) { return { resp: a[0], statut: a[1], type: a[2], inbox: toDate(a[3]), late: !!a[4], id: a[5] }; }) };
+          items: f.items.map(function (a) { return { resp: a[0], statut: a[1], type: a[2], inbox: toDate(a[3]), late: !!a[4], id: a[5], debut: toDate(a[6]) }; }) };
       });
       var days = fileDays();
       state.viewDay = days.indexOf(d.viewDay || d.refDate) >= 0 ? (d.viewDay || d.refDate) : days.pop() || '';
@@ -617,7 +621,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     { k: 'over', c: 5, label: '> seuil', unit: '' },
     { k: 'late', c: 4, label: 'En retard', unit: '' },
     { k: 'med', c: 6, label: 'Médiane', unit: ' j' },
-    { k: 'max', c: 11, label: 'Plus ancien', unit: ' j' }
+    { k: 'max', c: 11, label: 'Plus ancien', unit: ' j' },
+    { k: 'liq', c: 12, label: 'À liquider', unit: '' }
   ];
   var STATUS = {
     ok: ['ok', '✓', 'Atteint'], track: ['track', '↘', 'En bonne voie'], risk: ['risk', '!', 'À risque'],
@@ -626,10 +631,35 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   var RANK = { ok: 0, track: 1, na: 2, risk: 3, miss: 4 };
   function badge(st) { var s = STATUS[st]; return '<span class="st ' + s[0] + '"><i aria-hidden="true">' + s[1] + '</i>' + s[2] + '</span>'; }
   function seriesFor(snaps, key) {
-    return Object.keys(snaps).sort().filter(function (d) { return snaps[d][key]; }).map(function (d) { return snaps[d][key]; });
+    var meas = (state.objectives[key] || {}).meas || {}, days = {};
+    Object.keys(snaps).forEach(function (d) { if (snaps[d][key]) days[d] = 1; });
+    Object.keys(meas).forEach(function (d) { days[d] = 1; });
+    return Object.keys(days).sort().map(function (d) {
+      var r = snaps[d] && snaps[d][key] ? snaps[d][key].slice() : [d];
+      r[12] = meas[d] == null ? '' : meas[d];
+      return r;
+    });
+  }
+  // Nombre de dossiers dont la date de début est au plus tard la date limite, par jour d'extraction
+  function updateMeasures() {
+    Object.keys(state.objectives).forEach(function (k) {
+      var o = state.objectives[k], p = k.split('\t');
+      if (!o.cutoff) return;
+      var counts = {};
+      Object.keys(state.files).forEach(function (fk) {
+        var f = state.files[fk];
+        if (!f.items || f.prest !== p[0] || f.map.debut == null) return;
+        f.items.forEach(function (it) {
+          if (it.resp !== p[1]) return;
+          counts[f.day] = (counts[f.day] || 0) + (it.debut && isoDay(it.debut) <= o.cutoff ? 1 : 0);
+        });
+      });
+      o.meas = o.meas || {};
+      Object.keys(counts).forEach(function (d) { o.meas[d] = counts[d]; });
+    });
   }
   function metricStatus(series, m, o) {
-    var target = o[m.k]; if (target === '' || target == null) return null;
+    var target = o[m.k]; if (target === '' || target == null || (m.k === 'liq' && !o.cutoff)) return null;
     var cur = series[series.length - 1], v = cur ? cur[m.c] : '';
     if (v === '' || v == null) return { st: 'na', v: '–' };
     v = +v;
@@ -644,35 +674,47 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     return { st: projected <= target ? 'track' : 'risk', v: v };
   }
   function renderObjectives() {
+    updateMeasures();
     var snaps = allSnaps(), prest = $('prestFilter').value, edit = !!state.objEdit, keys = {};
     dayRows(snaps[state.viewDay], prest).forEach(function (r) { if (r[C.prest] !== OLD_PREST) keys[r[C.prest] + '\t' + r[C.resp]] = 1; });
     Object.keys(state.objectives).forEach(function (k) { if (!prest || k.split('\t')[0] === prest) keys[k] = 1; });
     keys = Object.keys(keys).sort();
     var alias = aliasMap(keys.map(function (k) { return k.split('\t')[1]; }).filter(function (n, i, a) { return a.indexOf(n) === i; }));
     $('objEdit').textContent = edit ? 'Terminer la saisie' : 'Fixer / modifier les objectifs';
-    $('objLegend').innerHTML = edit ? '<span>Laisse une case vide si tu ne fixes pas de cible sur cet indicateur.</span>' : ['ok', 'track', 'risk', 'miss', 'na'].map(function (k) { return badge(k); }).join('');
+    $('objLegend').innerHTML = edit ? '<span>Laisse une case vide si tu ne fixes pas de cible sur cet indicateur. « À liquider » = nombre de dossiers dont la date de début est au plus tard la date « Début ≤ » ; cible 0 = tout liquidé. Astuce : filtre d\'abord la prestation en haut de page, la ligne « Appliquer » ne touchera qu\'elle.</span>' : ['ok', 'track', 'risk', 'miss', 'na'].map(function (k) { return badge(k); }).join('');
     var t = $('objTable');
     if (!keys.length) { t.innerHTML = '<tr><td class="empty">Charge des extractions pour fixer des objectifs.</td></tr>'; return; }
     var th = function (x, left) { return '<th style="cursor:default' + (left ? ';text-align:left' : '') + '">' + x + '</th>'; };
-    var head = '<thead><tr>' + th('Prestation / collaborateur', 1) + th('Échéance') + METRICS.map(function (m) { return th(m.label + (m.unit ? ' (j)' : '')); }).join('') + (edit ? '' : th('Statut', 1)) + '</tr></thead>';
+    var head = '<thead><tr>' + th('Prestation / collaborateur', 1) + th('Échéance') + METRICS.map(function (m) { return (m.k === 'liq' ? th('Début ≤') : '') + th(m.label + (m.unit ? ' (j)' : '')); }).join('') + (edit ? '' : th('Statut', 1)) + '</tr></thead>';
     var body = '', lastP = null;
     if (edit) body += '<tr class="defaults"><td>Appliquer aux lignes vides</td><td><input type="date" data-def="due"></td>' +
-      METRICS.map(function (m) { return '<td><input type="number" min="0" data-def="' + m.k + '"></td>'; }).join('') + '</tr>';
+      METRICS.map(function (m) { return (m.k === 'liq' ? '<td><input type="date" data-def="cutoff"></td>' : '') + '<td><input type="number" min="0" data-def="' + m.k + '"></td>'; }).join('') + '</tr>';
     keys.forEach(function (k) {
       var p = k.split('\t'), o = state.objectives[k] || {}, series = seriesFor(snaps, k);
-      if (p[0] !== lastP) { body += '<tr class="group"><td colspan="' + (edit ? 6 : 7) + '">' + esc(p[0]) + '</td></tr>'; lastP = p[0]; }
+      if (p[0] !== lastP) {
+        var liqTot = 0, liqAny = false;
+        keys.forEach(function (k2) {
+          var o2 = state.objectives[k2]; if (k2.split('\t')[0] !== p[0] || !o2 || !o2.cutoff) return;
+          var sr = seriesFor(snaps, k2), last = sr.length ? sr[sr.length - 1][12] : '';
+          if (last !== '' && last != null) { liqTot += +last; liqAny = true; }
+        });
+        body += '<tr class="group"><td colspan="' + (edit ? 9 : 10) + '">' + esc(p[0]) + (liqAny && !edit ? ' <span class="muted" style="font-weight:400">· encore ' + liqTot + ' dossier' + (liqTot > 1 ? 's' : '') + ' à liquider</span>' : '') + '</td></tr>';
+        lastP = p[0];
+      }
       body += '<tr data-k="' + esc(k) + '"><td style="padding-left:20px">' + esc(alias[p[1]]) + '</td>';
       if (edit) {
         body += '<td><input type="date" data-m="due" value="' + (o.due || '') + '"></td>' + METRICS.map(function (m) {
-          return '<td><input type="number" min="0" data-m="' + m.k + '" value="' + (o[m.k] === '' || o[m.k] == null ? '' : o[m.k]) + '"></td>';
+          return (m.k === 'liq' ? '<td><input type="date" data-m="cutoff" value="' + (o.cutoff || '') + '"></td>' : '') +
+            '<td><input type="number" min="0" data-m="' + m.k + '" value="' + (o[m.k] === '' || o[m.k] == null ? '' : o[m.k]) + '"></td>';
         }).join('') + '</tr>';
         return;
       }
       var worst = null, cellsHtml = METRICS.map(function (m) {
         var r = metricStatus(series, m, o), cur = series.length ? series[series.length - 1][m.c] : '';
-        if (!r) return '<td>' + (cur === '' || cur == null ? '–' : cur + m.unit) + ' <span class="goal">/ –</span></td>';
+        var pre = m.k === 'liq' ? '<td>' + (o.cutoff ? fmt(o.cutoff) : '<span class="muted">–</span>') + '</td>' : '';
+        if (!r) return pre + '<td>' + (cur === '' || cur == null ? '–' : cur + m.unit) + ' <span class="goal">/ –</span></td>';
         if (worst === null || RANK[r.st] > RANK[worst]) worst = r.st;
-        return '<td><span class="' + (r.st === 'ok' ? 'down' : r.st === 'miss' || r.st === 'risk' ? 'hot' : '') + '">' + r.v + (r.v === '–' ? '' : m.unit) + '</span> <span class="goal">/ ' + o[m.k] + m.unit + '</span></td>';
+        return pre + '<td><span class="' + (r.st === 'ok' ? 'down' : r.st === 'miss' || r.st === 'risk' ? 'hot' : '') + '">' + r.v + (r.v === '–' ? '' : m.unit) + '</span> <span class="goal">/ ' + o[m.k] + m.unit + '</span></td>';
       }).join('');
       body += '<td>' + (o.due ? fmt(o.due) : '<span class="muted">–</span>') + '</td>' + cellsHtml +
         '<td style="text-align:left">' + (worst === null ? '<span class="muted">Pas d\'objectif</span>' : badge(worst)) + '</td></tr>';
@@ -683,8 +725,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       inp.addEventListener('change', function () {
         var k = inp.closest('tr').getAttribute('data-k'), m = inp.getAttribute('data-m');
         var o = state.objectives[k] = state.objectives[k] || { set: isoDay(new Date()) };
-        o[m] = m === 'due' ? inp.value : (inp.value === '' ? '' : Math.max(0, +inp.value));
-        var empty = !o.due && METRICS.every(function (x) { return o[x.k] === '' || o[x.k] == null; });
+        if (m === 'cutoff' && inp.value !== (o.cutoff || '')) o.meas = {}; // nouvelle date limite : nouvelles mesures
+        o[m] = m === 'due' || m === 'cutoff' ? inp.value : (inp.value === '' ? '' : Math.max(0, +inp.value));
+        var empty = !o.due && !o.cutoff && METRICS.every(function (x) { return o[x.k] === '' || o[x.k] == null; });
         if (empty) delete state.objectives[k];
         persist();
       });
@@ -706,15 +749,19 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     sel.innerHTML = '<option value="">Tous</option>' + people.map(function (p) {
       return '<option value="' + esc(p) + '"' + (p === who ? ' selected' : '') + '>' + esc(alias[p]) + '</option>';
     }).join('');
-    var list = items.filter(function (it) { return it.inbox && (!who || it.resp === who); })
-      .sort(function (a, b) { return a.inbox - b.inbox; }).slice(0, +$('oldN').value || 20);
+    var onlyLiq = $('onlyLiq').checked;
+    var toLiq = function (it) { var o = state.objectives[it.prest + '\t' + it.resp]; return o && o.cutoff && it.debut && isoDay(it.debut) <= o.cutoff; };
+    var all = items.filter(function (it) { return (onlyLiq ? toLiq(it) : it.inbox) && (!who || it.resp === who); })
+      .sort(function (a, b) { return onlyLiq ? (a.debut - b.debut) || (a.inbox - b.inbox) : a.inbox - b.inbox; });
+    var list = all.slice(0, +$('oldN').value || 20);
+    $('oldCount').textContent = onlyLiq ? all.length + ' dossier' + (all.length > 1 ? 's' : '') + ' à liquider' + (all.length > list.length ? ', ' + list.length + ' affichés' : '') + '.' : '';
     var showId = $('showId').checked, th = function (t, left) { return '<th style="cursor:default' + (left ? ';text-align:left' : '') + '">' + t + '</th>'; };
-    if (!list.length) { $('oldTable').innerHTML = '<tr><td class="empty">Aucun dossier daté</td></tr>'; return; }
-    $('oldTable').innerHTML = '<thead><tr>' + th('Date inbox') + th('Ancienneté') + th('Collaborateur', 1) + th('Type de transaction', 1) +
+    if (!list.length) { $('oldTable').innerHTML = '<tr><td class="empty">' + (onlyLiq ? 'Aucun dossier à liquider (ou aucun objectif « Début ≤ » fixé).' : 'Aucun dossier daté') + '</td></tr>'; return; }
+    $('oldTable').innerHTML = '<thead><tr>' + th('Date inbox') + th('Ancienneté') + th('Date de début') + th('Collaborateur', 1) + th('Prestation', 1) + th('Type de transaction', 1) +
       th('Statut', 1) + th('En retard', 1) + (showId ? th("ID de l'objet", 1) : '') + '</tr></thead><tbody>' +
       list.map(function (it) {
-        var a = Math.max(0, Math.round((ref - it.inbox) / 86400000)), L = 'style="text-align:left"';
-        return '<tr><td>' + dmy(it.inbox) + '</td><td' + (a > thr ? ' class="hot"' : '') + '>' + a + ' j</td><td ' + L + '>' + esc(alias[it.resp]) +
+        var a = it.inbox ? Math.max(0, Math.round((ref - it.inbox) / 86400000)) : 0, L = 'style="text-align:left"';
+        return '<tr><td>' + (it.inbox ? dmy(it.inbox) : '–') + '</td><td' + (a > thr ? ' class="hot"' : '') + '>' + (it.inbox ? a + ' j' : '–') + '</td><td>' + (it.debut ? dmy(it.debut) : '–') + '</td><td ' + L + '>' + esc(alias[it.resp]) + '</td><td ' + L + '>' + esc(it.prest) +
           '</td><td ' + L + '>' + esc(it.type) + '</td><td ' + L + '>' + esc(it.statut) + '</td><td ' + L + '>' +
           (it.late ? '<span class="status hot"><span class="dot" style="background:var(--critical)"></span>Oui</span>' : '<span class="muted">Non</span>') +
           '</td>' + (showId ? '<td ' + L + '>' + esc(it.id) + '</td>' : '') + '</tr>';
@@ -780,8 +827,14 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     var objs = Object.keys(state.objectives).sort();
     if (objs.length) csv += '\r\n\r\n' + [OBJ_HEAD].concat(objs.map(function (k) {
       var o = state.objectives[k], p = k.split('\t');
-      return ['objectif', p[0], p[1], o.due || '', o.over, o.late, o.med, o.max, o.set || ''];
+      return ['objectif', p[0], p[1], o.due || '', o.over, o.late, o.med, o.max, o.set || '', o.cutoff || '', o.liq];
     })).map(line).join('\r\n');
+    var meas = [];
+    objs.forEach(function (k) {
+      var o = state.objectives[k], p = k.split('\t');
+      Object.keys(o.meas || {}).sort().forEach(function (d) { meas.push(['a_liquider', p[0], p[1], d, o.meas[d], o.cutoff || '']); });
+    });
+    if (meas.length) csv += '\r\n\r\n' + [MEAS_HEAD].concat(meas).map(line).join('\r\n');
     var a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
     a.download = 'historique_inbox_' + (rows.length ? rows[rows.length - 1][0] : isoDay(new Date())) + '.csv';
@@ -801,15 +854,22 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         var lines = String(e.target.result).replace(/^\ufeff/, '').split(/\r?\n/).filter(function (l) { return l.replace(/;/g, '').trim(); });
         var cells = function (l) { return l.split(';').map(function (x) { return x.replace(/^"|"$/g, ''); }); };
         var keyOf = function (x) { return norm(x).replace(/ /g, '_'); };
-        var idx = null, oidx = null, known = false;
+        var idx = null, oidx = null, midx = null, known = false;
         lines.forEach(function (l) {
           var c = cells(l), h = c.map(keyOf);
-          if (h[0] === 'date') { idx = SNAP_HEAD.map(function (x) { return h.indexOf(x); }); oidx = null; known = idx[2] >= 0 && idx[3] >= 0; return; }
-          if (h[0] === 'type') { oidx = OBJ_HEAD.map(function (x) { return h.indexOf(x); }); idx = null; known = true; return; }
+          if (h[0] === 'date') { idx = SNAP_HEAD.map(function (x) { return h.indexOf(x); }); oidx = midx = null; known = idx[2] >= 0 && idx[3] >= 0; return; }
+          if (h[0] === 'type') { oidx = OBJ_HEAD.map(function (x) { return h.indexOf(x); }); idx = midx = null; known = true; return; }
+          if (h[0] === 'mesure') { midx = MEAS_HEAD.map(function (x) { return h.indexOf(x); }); idx = oidx = null; return; }
+          if (midx) {
+            var mk = c[midx[1]] + '\t' + c[midx[2]], mo = state.objectives[mk];
+            if (!mo || c[midx[4]] === '' || (c[midx[5]] || '') !== (mo.cutoff || '')) return;
+            (mo.meas = mo.meas || {})[c[midx[3]]] = +c[midx[4]];
+            return;
+          }
           if (oidx) {
             if (c[oidx[0]] !== 'objectif') return;
-            var o = { due: c[oidx[3]] || '', set: c[oidx[8]] || '' };
-            ['over', 'late', 'med', 'max'].forEach(function (m, i) { var v = c[oidx[4 + i]]; o[m] = v === '' || v == null ? '' : +v; });
+            var o = { due: c[oidx[3]] || '', set: c[oidx[8]] || '', cutoff: oidx[9] >= 0 ? c[oidx[9]] || '' : '' };
+            ['over', 'late', 'med', 'max', 'liq'].forEach(function (m, i) { var j = oidx[i < 4 ? 4 + i : 10], v = j >= 0 ? c[j] : ''; o[m] = v === '' || v == null ? '' : +v; });
             state.objectives[c[oidx[1]] + '\t' + c[oidx[2]]] = o;
             return;
           }
@@ -980,7 +1040,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   ['dragenter', 'dragover'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('over'); }); });
   ['dragleave', 'drop'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('over'); }); });
   drop.addEventListener('drop', function (e) { readFiles(e.dataTransfer.files); });
-  ['threshold', 'prestFilter', 'pseudo', 'oldN', 'oldWho', 'showId'].forEach(function (id) { $(id).addEventListener('change', render); });
+  ['threshold', 'prestFilter', 'pseudo', 'oldN', 'oldWho', 'showId', 'onlyLiq'].forEach(function (id) { $(id).addEventListener('change', render); });
   $('viewDay').addEventListener('change', function () { state.viewDay = this.value; render(); });
   $('exportBtn').onclick = exportHistory;
   $('endBtn').onclick = endSession;
