@@ -482,7 +482,10 @@ code { font-size: 12px; }
     } catch (e) { /* données illisibles : on repart de zéro */ }
   }
   function clearStored() {
-    if (!confirm('Effacer toutes les données mémorisées sur ce poste (dossiers chargés et historique) ?')) return;
+    var hasHistory = historyRows().length || Object.keys(state.objectives).length;
+    if (!confirm('Effacer toutes les données mémorisées sur ce poste (dossiers chargés et historique) ?' +
+      (hasHistory ? '\n\nUne copie de l\'historique et des objectifs va d\'abord être téléchargée : garde-la pour la réimporter.' : ''))) return;
+    if (hasHistory && !exportHistory()) return; // jamais d'effacement sans copie de l'historique
     wipe();
   }
   function wipe() {
